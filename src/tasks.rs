@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 
 pub const DATA_PATH: &str = "./data";
 
@@ -8,7 +8,7 @@ pub(crate) enum Task {
 		data: Vec<Box<str>>,
 		stops: [char; 4],
 		steps: isize,
-		value_cache: (),
+		value_cache: BTreeMap<String, String>,
 	},
 	Text {
 		data: Vec<Box<str>>,
@@ -172,7 +172,7 @@ pub(crate) fn get_task(name: &str, file_path: &str) -> anyhow::Result<Task> {
 				data: puzzles,
 				stops: ['\n', '\n', '\n', '\n'],
 				steps: 4,
-				value_cache: (),
+				value_cache: BTreeMap::new(),
 			}
 		}
 		"text" => {
