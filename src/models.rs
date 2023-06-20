@@ -22,10 +22,7 @@
         n: u8,
         stop: &str,
     ) -> Result<CreateChatCompletionResponse, OpenAIError> {
-        dotenv().ok();
-        let api_key =
-            env::var("OPENAI_API_KEY").expect("API key not found in environment variable");
-        let client = Client::new().with_api_key(api_key);
+        let client = Client::new();
         let request = CreateChatCompletionRequestArgs::default()
             .model(model)
             .temperature(temperature)

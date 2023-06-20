@@ -22,6 +22,7 @@ struct Opts {
 	n_select_sample: isize,
 }
 
+
 fn parse_args() -> anyhow::Result<Opts> {
 	let mut args = pico_args::Arguments::from_env();
 
