@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.71"
-async-openai = "0.10.3"
+async-openai = "0.11.0"
 backoff = "0.4.0"
 csv = "1.2.2"
 dotenv = "0.15.0"

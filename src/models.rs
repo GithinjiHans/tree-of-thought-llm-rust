@@ -8,9 +8,7 @@
     };
     use backoff::future::retry;
     use backoff::ExponentialBackoff;
-    use dotenv::dotenv;
-    use std::env;
-
+    
     static mut COMPLETION_TOKENS: u32 = 0;
     static mut PROMPT_TOKENS: u32 = 0;
 
