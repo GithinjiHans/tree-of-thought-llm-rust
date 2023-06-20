@@ -1,4 +1,5 @@
 mod tasks;
+mod models;
 
 struct Opts {
 	backend: String,
