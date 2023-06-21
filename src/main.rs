@@ -1,4 +1,4 @@
-use crate::models::gpt;
+use std::{collections::BTreeMap, path::Path};
 
 mod models;
 mod tasks;
@@ -22,120 +22,6 @@ struct Opts {
 	n_generate_sample: isize,
 	n_evaluate_sample: isize,
 	n_select_sample: isize,
-}
-
-fn get_current_number(y: &str) -> Option<&str> {
-	y.trim().lines().last().unwrap_or("").split("left: ").last().unwrap_or("").split(')').next()
-}
-
-static VALUE_LAST_STEP_PROMPT: &'static str = r#"Use numbers and basic arithmetic operations (+ - * /) to obtain 24. Given an input and an answer, give a judgement (sure/impossible) if the answer is correct, i.e. it uses each input exactly once and no other numbers, and reach 24.
-Input: 4 4 6 8
-Answer: (4 + 8) * (6 - 4) = 24
-Judge:
-sure
-Input: 2 9 10 12
-Answer: 2 * 12 * (10 - 9) = 24
-Judge:
-sure
-Input: 4 9 10 13
-Answer: (13 - 9) * (10 - 4) = 24
-Judge:
-sure
-Input: 4 4 6 8
-Answer: (4 + 8) * (6 - 4) + 1 = 25
-Judge:
-impossible
-Input: 2 9 10 12
-Answer: 2 * (12 - 10) = 24
-Judge:
-impossible
-Input: 4 9 10 13
-Answer: (13 - 4) * (10 - 9) = 24
-Judge:
-impossible
-Input: {input}
-Answer: {ans}
-Judge:"#;
-
-static VALUE_PROMPT: &'static str = r#"Evaluate if given numbers can reach 24 (sure/likely/impossible)
-10 14
-10 + 14 = 24
-sure
-11 12
-11 + 12 = 23
-12 - 11 = 1
-11 * 12 = 132
-11 / 12 = 0.91
-impossible
-4 4 10
-4 + 4 + 10 = 8 + 10 = 18
-4 * 10 - 4 = 40 - 4 = 36
-(10 - 4) * 4 = 6 * 4 = 24
-sure
-4 9 11
-9 + 11 + 4 = 20 + 4 = 24
-sure
-5 7 8
-5 + 7 + 8 = 12 + 8 = 20
-(8 - 5) * 7 = 3 * 7 = 21
-I cannot obtain 24 now, but numbers are within a reasonable range
-likely
-5 6 6
-5 + 6 + 6 = 17
-(6 - 5) * 6 = 1 * 6 = 6
-I cannot obtain 24 now, but numbers are within a reasonable range
-likely
-10 10 11
-10 + 10 + 11 = 31
-(11 - 10) * 10 = 10
-10 10 10 are all too big
-impossible
-1 3 3
-1 * 3 * 3 = 9
-(1 + 3) * 3 = 12
-1 3 3 are all too small
-impossible
-{input}
-"#;
-
-async fn get_value<'task>(task: &'task tasks::Task, x: &str, y: &str, n_evaluate_sample: u8, cache_value: bool) -> anyhow::Result<&'task String> {
-	match task {
-		tasks::Task::Game24 { value_cache, .. } => {
-			let last_line = y.trim().lines().last().unwrap_or("");
-			let value_prompt = if !last_line.contains("left: ") {
-				let ans = last_line.to_lowercase().replace("answer: ", "");
-				VALUE_LAST_STEP_PROMPT.replace("{input}", x).replace("{ans}", &ans)
-			} else {
-				let current_numbers = get_current_number(y).unwrap();
-				VALUE_PROMPT.replace("{input}", current_numbers)
-			};
-
-			if cache_value && value_cache.contains_key(&value_prompt) {
-				return value_cache.get(&value_prompt).ok_or(anyhow::anyhow!("Value not found in cache"));
-			} else {
-				let outputs = gpt(&value_prompt, None, None, None, Some(n_evaluate_sample), None).await;
-				todo!()
-			}
-		}
-		task => anyhow::bail!("Invalid Task: {task:?}"),
-	}
-}
-
-fn get_values(task: &tasks::Task, x: &str, y: &str, n_evaluate_sample: i32, cache_value: bool) -> anyhow::Result<String> {
-	match task {
-		tasks::Task::Game24 { data, stops, steps, value_cache } => {
-			let last_line = y.trim().lines().last().unwrap_or("");
-			if !last_line.contains("left: ") {
-				let ans = last_line.to_lowercase().replace("answer: ", "");
-				let res = VALUE_LAST_STEP_PROMPT.replace("{input}", x).replace("{ans}", &ans);
-				Ok(res)
-			} else {
-				let current_numbers = get_current_number(y).unwrap();
-				Ok(VALUE_PROMPT.replace("{input}", current_numbers))
-			}
-		}
-		task => anyhow::bail!("Invalid Task: {task:?}"),
-	}
 }
 
 fn parse_args() -> anyhow::Result<Opts> {
@@ -208,6 +94,48 @@ fn parse_args() -> anyhow::Result<Opts> {
 fn main() -> anyhow::Result<()> {
 	let options = parse_args()?;
 	let task = tasks::get_task(&options.task, &options.task_file_path)?;
+
+	let mut logs = vec![()];
+	let mut cnt_avg = 0i64;
+	let mut cnt_any = 0i64;
+
+	let file = if options.naive_run {
+		format!(
+			"logs/{}/{}_{}_naive_{}_sample_{}_start{}_end{}.json",
+			options.task,
+			options.backend,
+			options.temperature,
+			options.prompt_sample.unwrap_or("none".into()),
+			options.n_generate_sample,
+			options.task_start_index,
+			options.task_end_index
+		)
+	} else {
+		format!(
+			"logs/{}/{}_{}_{}_sample_{}_start{}_end{}.json",
+			options.task,
+			options.backend,
+			options.temperature,
+			options.prompt_sample.unwrap_or("none".into()),
+			options.n_generate_sample,
+			options.task_start_index,
+			options.task_end_index
+		)
+	};
+
+	let path = Path::new(&file).parent().unwrap();
+	std::fs::create_dir_all(path)?;
+
+	for i in options.task_start_index..options.task_end_index {
+		let (ys, info) = if options.naive_run {
+			let x = task.get_input(i as usize)?;
+			// pub fn get_samples(&self, x: &str, y: &str, n_evaluate_sample: i32, prompt_sample: &str, stop: &str) {}
+			let ys = task.get_samples(&x, "", options.n_evaluate_sample, options.prompt_sample.as_ref().map(|s| s.as_str()).unwrap_or(""), None);
+			todo!()
+		} else {
+			todo!()
+		};
+	}
 
 	Ok(())
 }
