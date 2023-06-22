@@ -182,6 +182,10 @@ fn main() -> anyhow::Result<()> {
 			todo!()
 		};
 		// log	
+		// todo!()
+
+		// log main metric
+		
 	}
 
 	Ok(())
