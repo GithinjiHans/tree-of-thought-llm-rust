@@ -151,22 +151,37 @@ fn main() -> anyhow::Result<()> {
 			let infos = Vec::<InfoData>::new();
 	        for step in 0..task.get_steps(){
 				// generation
-				match options.method_generate {
-        Some(ref method) => {
-			if *method == "sample"{
-               let new_ys: Vec<_> = ys
-			   .iter()
-			   .map(|y| {
-				todo!()			
-			   })
-			   .collect();
-			}
-		},
-        None => todo!(),
-    }
+				if options.method_generate.clone().unwrap_or("".to_owned()) == "sample" {
+					// todo!()
+				} else if options.method_generate.clone().unwrap_or("".to_owned()) == "propose" {
+					// todo!()
+				} else {
+					anyhow::bail!("Invalid method_generate: {:?}", options.method_generate);
+				}
+				// evaluation
+				if options.method_evaluate.clone().unwrap_or("".to_owned()) == "vote" {
+					// todo!()
+				} else if options.method_evaluate.clone().unwrap_or("".to_owned()) == "value" {
+					// todo!()
+				} else {
+					anyhow::bail!("Invalid method_evaluate: {:?}", options.method_evaluate);
+				}
+
+				// selection
+				if options.method_select.clone().unwrap_or("".to_owned()) == "sample" {
+					// todo!()
+				} else if options.method_select.clone().unwrap_or("".to_owned()) == "greedy" {
+					// todo!()
+				} else {
+					anyhow::bail!("Invalid method_select: {:?}", options.method_select);
+				}
+
+				// log
+				// print log
 			}
 			todo!()
-		}; 
+		};
+		// log	
 	}
 
 	Ok(())
