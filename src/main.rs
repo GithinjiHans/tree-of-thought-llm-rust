@@ -1,4 +1,7 @@
-use std::path::Path;
+use std::{
+	collections::BTreeMap,
+	path::Path,
+};
 
 mod models;
 mod tasks;
@@ -93,7 +96,7 @@ fn parse_args() -> anyhow::Result<Opts> {
 
 fn main() -> anyhow::Result<()> {
 	let options = parse_args()?;
-	let task = tasks::get_task(&options.task, &options.task_file_path)?;
+	let mut task = tasks::get_task(&options.task, &options.task_file_path)?;
 
 	let mut logs = vec![()];
 	let mut cnt_avg = 0i64;
@@ -105,7 +108,7 @@ fn main() -> anyhow::Result<()> {
 			options.task,
 			options.backend,
 			options.temperature,
-			options.prompt_sample.unwrap_or("none".into()),
+			options.prompt_sample.clone().unwrap_or("none".into()),
 			options.n_generate_sample,
 			options.task_start_index,
 			options.task_end_index
@@ -116,7 +119,7 @@ fn main() -> anyhow::Result<()> {
 			options.task,
 			options.backend,
 			options.temperature,
-			options.prompt_sample.unwrap_or("none".into()),
+			options.prompt_sample.clone().unwrap_or("none".into()),
 			options.n_generate_sample,
 			options.task_start_index,
 			options.task_end_index
@@ -127,14 +130,43 @@ fn main() -> anyhow::Result<()> {
 	std::fs::create_dir_all(path)?;
 
 	for i in options.task_start_index..options.task_end_index {
+		// solve
 		let (ys, info) = if options.naive_run {
 			let x = task.get_input(i as usize)?;
 			// pub fn get_samples(&self, x: &str, y: &str, n_evaluate_sample: i32, prompt_sample: &str, stop: &str) {}
 			let ys = task.get_samples(&x, "", options.n_evaluate_sample, options.prompt_sample.as_ref().map(|s| s.as_str()).unwrap_or(""), None);
-			todo!()
+			// todo!()
+			(ys, BTreeMap::<&str, &str>::new())
 		} else {
+			struct InfoData {
+				step: i32,
+				x: String,
+				ys: Vec<String>,
+				new_ys: Vec<String>,
+				values: Vec<f64>,
+				select_new_ys: Vec<String>,
+			}
+			let x = task.get_input(i as usize)?;
+			let ys = Vec::<String>::new();
+			let infos = Vec::<InfoData>::new();
+	        for step in 0..task.get_steps(){
+				// generation
+				match options.method_generate {
+        Some(ref method) => {
+			if *method == "sample"{
+               let new_ys: Vec<_> = ys
+			   .iter()
+			   .map(|y| {
+				todo!()			
+			   })
+			   .collect();
+			}
+		},
+        None => todo!(),
+    }
+			}
 			todo!()
-		};
+		}; 
 	}
 
 	Ok(())

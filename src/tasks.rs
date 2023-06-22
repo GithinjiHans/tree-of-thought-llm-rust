@@ -99,6 +99,12 @@ fn get_current_number(y: &str) -> Option<&str> {
 }
 
 impl Task {
+	pub fn get_steps(&self) -> isize {
+		match self {
+			Task::Game24 { steps, .. } | Task::Text { steps, .. } | Task::MiniCrossword { steps, .. } => *steps,
+		}
+	}
+
 	pub fn get_input(&mut self, idx: usize) -> anyhow::Result<String> {
 		match self {
 			Task::MiniCrossword { env, .. } => {
@@ -167,6 +173,7 @@ impl Task {
 	pub fn get_proposals(&self, x: &str, y: &str) -> Vec<String> {
 		let propose_prompt = {
 		};
+		todo!()
 	}
 	pub fn get_samples(&self, x: &str, y: &str, n_evaluate_sample: isize, prompt_sample: &str, stop: Option<&str>) {}
 }
