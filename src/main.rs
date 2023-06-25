@@ -1,10 +1,19 @@
-use std::{
-	collections::BTreeMap,
-	path::Path,
-};
+use rand::distributions::{Distribution, WeightedIndex};
+use rand::Rng;
+use std::path::Path;
 
 mod models;
+mod strings;
 mod tasks;
+
+struct InfoData {
+	step: i32,
+	x: String,
+	ys: Vec<String>,
+	new_ys: Vec<String>,
+	values: Vec<f32>,
+	select_new_ys: Vec<String>,
+}
 
 struct Opts {
 	backend: String,
@@ -72,9 +81,9 @@ fn parse_args() -> anyhow::Result<Opts> {
 		sample => anyhow::bail!("Invalid method_select: {:?}", sample),
 	}
 
-	let n_generate_sample = args.opt_value_from_str("--n_generate_sample")?.unwrap_or(1isize);
-	let n_evaluate_sample = args.opt_value_from_str("--n_evaluate_sample")?.unwrap_or(1isize);
-	let n_select_sample = args.opt_value_from_str("--n_select_sample")?.unwrap_or(1isize);
+	let n_generate_sample = args.opt_value_from_str("--n_generate_sample")?.unwrap_or(1);
+	let n_evaluate_sample = args.opt_value_from_str("--n_evaluate_sample")?.unwrap_or(1);
+	let n_select_sample = args.opt_value_from_str("--n_select_sample")?.unwrap_or(1);
 
 	Ok(Opts {
 		backend,
@@ -94,7 +103,8 @@ fn parse_args() -> anyhow::Result<Opts> {
 	})
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
 	let options = parse_args()?;
 	let mut task = tasks::get_task(&options.task, &options.task_file_path)?;
 
@@ -131,61 +141,86 @@ fn main() -> anyhow::Result<()> {
 
 	for i in options.task_start_index..options.task_end_index {
 		// solve
-		let (ys, info) = if options.naive_run {
+		let (ys, infos) = if options.naive_run {
 			let x = task.get_input(i as usize)?;
-			// pub fn get_samples(&self, x: &str, y: &str, n_evaluate_sample: i32, prompt_sample: &str, stop: &str) {}
-			let ys = task.get_samples(&x, "", options.n_evaluate_sample, options.prompt_sample.as_ref().map(|s| s.as_str()).unwrap_or(""), None);
-			// todo!()
-			(ys, BTreeMap::<&str, &str>::new())
+			let ys = task
+				.get_samples(&x, "", options.n_evaluate_sample, options.prompt_sample.as_ref().map(|s| s.as_str()).unwrap_or(""), None)
+				.await?;
+			(ys, None)
 		} else {
-			struct InfoData {
-				step: i32,
-				x: String,
-				ys: Vec<String>,
-				new_ys: Vec<String>,
-				values: Vec<f64>,
-				select_new_ys: Vec<String>,
-			}
 			let x = task.get_input(i as usize)?;
-			let ys = Vec::<String>::new();
-			let infos = Vec::<InfoData>::new();
-	        for step in 0..task.get_steps(){
-				// generation
-				if options.method_generate.clone().unwrap_or("".to_owned()) == "sample" {
-					// todo!()
-				} else if options.method_generate.clone().unwrap_or("".to_owned()) == "propose" {
-					// todo!()
-				} else {
-					anyhow::bail!("Invalid method_generate: {:?}", options.method_generate);
-				}
-				// evaluation
-				if options.method_evaluate.clone().unwrap_or("".to_owned()) == "vote" {
-					// todo!()
-				} else if options.method_evaluate.clone().unwrap_or("".to_owned()) == "value" {
-					// todo!()
-				} else {
-					anyhow::bail!("Invalid method_evaluate: {:?}", options.method_evaluate);
-				}
+			let mut ys = vec![String::new()];
+			let mut infos = Vec::<InfoData>::new();
+			for step in 0..task.get_steps() {
+				let new_ys = match options.method_generate.as_ref().map(|s| s.as_str()) {
+					Some("sample") => {
+						let mut new_ys = Vec::new();
+						for y in &ys {
+							let new_y = task
+								.get_samples(&x, y, options.n_generate_sample, options.prompt_sample.as_ref().map(|s| s.as_str()).unwrap_or(""), None)
+								.await?;
+							new_ys.extend(new_y);
+						}
+						new_ys
+					}
+					Some("propose") => {
+						let mut new_ys = Vec::new();
+						for y in &ys {
+							let new_y = task.get_proposals(&x, y).await?;
+							new_ys.extend(new_y);
+						}
+						new_ys
+					}
+					method => anyhow::bail!("Invalid method_generate: {:?}", method),
+				};
+				let ids = (0..new_ys.len()).collect::<Vec<_>>();
+				let values = match options.method_evaluate.as_ref().map(|s| s.as_str()) {
+					Some("votes") => task.get_votes(&x, &ys, options.n_evaluate_sample),
+					Some("value") => task.get_values(&x, &ys, options.n_evaluate_sample, None).await,
+					ev => anyhow::bail!("Invalid method_evaluate: {:?}", ev),
+				}?;
 
-				// selection
-				if options.method_select.clone().unwrap_or("".to_owned()) == "sample" {
-					// todo!()
-				} else if options.method_select.clone().unwrap_or("".to_owned()) == "greedy" {
-					// todo!()
-				} else {
-					anyhow::bail!("Invalid method_select: {:?}", options.method_select);
-				}
+				let select_ids = match options.method_select.as_ref().map(|s| s.as_str()) {
+					Some("sample") => {
+						let sum = values.iter().sum::<f32>();
+						let ps = values.iter().map(|v| v / sum).collect::<Vec<_>>();
+						let weighted_index = WeightedIndex::new(&ps).unwrap();
+						let mut rng = rand::thread_rng();
+						(0..options.n_select_sample).map(|_| ids[weighted_index.sample(&mut rng)] as f32).collect::<Vec<_>>()
+					}
+					Some("greedy") => {
+						let mut v = ids.iter().map(|id| values[*id]).collect::<Vec<_>>();
+						v.sort_by(|a, b| b.partial_cmp(a).unwrap());
+						v.reverse();
+						v
+					}
+					s => anyhow::bail!("Invalid method_select: {:?}", s),
+				};
 
-				// log
-				// print log
+				let select_new_ys = select_ids.iter().map(|id| new_ys[*id as usize].clone()).collect::<Vec<_>>();
+
+				// log unimplemented
+
+				infos.push(InfoData {
+					step: step.try_into().unwrap(),
+					x: x.clone(),
+					ys: ys.clone(),
+					new_ys,
+					values,
+					select_new_ys: select_new_ys.clone(),
+				});
+
+				ys = select_new_ys;
 			}
-			todo!()
+
+			(ys, Some(infos))
 		};
-		// log	
+
+		
+		// log
 		// todo!()
 
 		// log main metric
-		
 	}
 
 	Ok(())

@@ -1,4 +1,6 @@
-use crate::models::gpt;
+use anyhow::Ok;
+
+use crate::{models::gpt, strings};
 use std::{collections::BTreeMap, path::Path};
 
 pub const DATA_PATH: &str = "./data";
@@ -24,76 +26,6 @@ pub(crate) enum Task {
 	},
 }
 
-static VALUE_LAST_STEP_PROMPT: &'static str = r#"Use numbers and basic arithmetic operations (+ - * /) to obtain 24. Given an input and an answer, give a judgement (sure/impossible) if the answer is correct, i.e. it uses each input exactly once and no other numbers, and reach 24.
-Input: 4 4 6 8
-Answer: (4 + 8) * (6 - 4) = 24
-Judge:
-sure
-Input: 2 9 10 12
-Answer: 2 * 12 * (10 - 9) = 24
-Judge:
-sure
-Input: 4 9 10 13
-Answer: (13 - 9) * (10 - 4) = 24
-Judge:
-sure
-Input: 4 4 6 8
-Answer: (4 + 8) * (6 - 4) + 1 = 25
-Judge:
-impossible
-Input: 2 9 10 12
-Answer: 2 * (12 - 10) = 24
-Judge:
-impossible
-Input: 4 9 10 13
-Answer: (13 - 4) * (10 - 9) = 24
-Judge:
-impossible
-Input: {input}
-Answer: {ans}
-Judge:"#;
-
-static VALUE_PROMPT: &'static str = r#"Evaluate if given numbers can reach 24 (sure/likely/impossible)
-10 14
-10 + 14 = 24
-sure
-11 12
-11 + 12 = 23
-12 - 11 = 1
-11 * 12 = 132
-11 / 12 = 0.91
-impossible
-4 4 10
-4 + 4 + 10 = 8 + 10 = 18
-4 * 10 - 4 = 40 - 4 = 36
-(10 - 4) * 4 = 6 * 4 = 24
-sure
-4 9 11
-9 + 11 + 4 = 20 + 4 = 24
-sure
-5 7 8
-5 + 7 + 8 = 12 + 8 = 20
-(8 - 5) * 7 = 3 * 7 = 21
-I cannot obtain 24 now, but numbers are within a reasonable range
-likely
-5 6 6
-5 + 6 + 6 = 17
-(6 - 5) * 6 = 1 * 6 = 6
-I cannot obtain 24 now, but numbers are within a reasonable range
-likely
-10 10 11
-10 + 10 + 11 = 31
-(11 - 10) * 10 = 10
-10 10 10 are all too big
-impossible
-1 3 3
-1 * 3 * 3 = 9
-(1 + 3) * 3 = 12
-1 3 3 are all too small
-impossible
-{input}
-"#;
-
 fn get_current_number(y: &str) -> Option<&str> {
 	y.trim().lines().last().unwrap_or("").split("left: ").last().unwrap_or("").split(')').next()
 }
@@ -115,16 +47,16 @@ impl Task {
 		}
 	}
 
-	async fn get_value(&mut self, x: &str, y: &str, n_evaluate_sample: u8, cache_value: bool) -> anyhow::Result<f32> {
+	async fn get_value(&mut self, x: &str, y: &str, n_evaluate_sample: isize, cache_value: bool) -> anyhow::Result<f32> {
 		match self {
 			Task::Game24 { ref mut value_cache, .. } => {
 				let last_line = y.trim().lines().last().unwrap_or("");
 				let value_prompt = if !last_line.contains("left: ") {
 					let ans = last_line.to_lowercase().replace("answer: ", "");
-					VALUE_LAST_STEP_PROMPT.replace("{input}", x).replace("{ans}", &ans)
+					strings::VALUE_LAST_STEP_PROMPT.replace("{input}", x).replace("{ans}", &ans)
 				} else {
 					let current_numbers = get_current_number(y).unwrap();
-					VALUE_PROMPT.replace("{input}", current_numbers)
+					strings::VALUE_PROMPT.replace("{input}", current_numbers)
 				};
 
 				if cache_value && value_cache.contains_key(&value_prompt) {
@@ -152,15 +84,15 @@ impl Task {
 		}
 	}
 
-	async fn get_values(&mut self, x: &str, ys: &[&str], n_evaluate_sample: u8, cache_value: bool) -> anyhow::Result<Vec<f32>> {
+	pub async fn get_values(&mut self, x: &str, ys: &[String], n_evaluate_sample: isize, cache_value: Option<bool>) -> anyhow::Result<Vec<f32>> {
 		let mut values = vec![];
 		let mut local_value_cache = BTreeMap::new();
 
 		for y in ys {
-			if local_value_cache.contains_key(*y) {
+			if local_value_cache.contains_key(y) {
 				values.push(0f32);
 			} else {
-				let value = self.get_value(x, y, n_evaluate_sample, cache_value).await?;
+				let value = self.get_value(x, y, n_evaluate_sample, cache_value.unwrap_or(true)).await?;
 				local_value_cache.insert(y.to_string(), value);
 				values.push(value);
 			}
@@ -169,13 +101,113 @@ impl Task {
 		Ok(values)
 	}
 
-	pub fn get_votes(&self, x: &str, ys: &str, n_evaluate_sample: isize) {}
-	pub fn get_proposals(&self, x: &str, y: &str) -> Vec<String> {
-		let propose_prompt = {
+	pub async fn get_samples(&self, x: &str, y: &str, n_generate_sample: isize, prompt_sample: &str, stop: Option<&str>) -> anyhow::Result<Vec<String>> {
+		let prompt = match prompt_sample {
+			"standard" => self.standard_prompt_wrap(x, y),
+			"cot" => self.cot_prompt_wrap(x, y),
+			sample => anyhow::bail!("Prompt sample {} not recognized", sample),
 		};
-		todo!()
+
+		let samples = gpt(&prompt, None, None, None, Some(n_generate_sample), stop).await;
+		Ok(samples.iter().map(|s| format!("{y}{s}")).collect())
 	}
-	pub fn get_samples(&self, x: &str, y: &str, n_evaluate_sample: isize, prompt_sample: &str, stop: Option<&str>) {}
+
+	pub fn get_votes(&self, x: &str, ys: &[String], n_evaluate_sample: isize) -> anyhow::Result<Vec<f32>> {
+		unimplemented!()
+	}
+	pub async fn get_proposals(&mut self, x: &str, y: &str) -> anyhow::Result<Vec<String>> {
+		let propose_prompt = self.propose_prompt_wrap(x, y)?;
+		let output = gpt(&propose_prompt, None, None, None, Some(1), None).await;
+		let Some(outputs) = output.first() else {
+			anyhow::bail!("No outputs found");
+		};
+		Ok(outputs.lines().map(|o| format!("{}{}\n", y, o)).collect::<Vec<_>>())
+	}
+	pub fn set_status(&mut self, x: &str, y: &str) -> anyhow::Result<BTreeMap<String, isize>> {
+		match self {
+			Task::MiniCrossword { env, xs, steps, cache_proposals } => {
+				let Some((idx, _)) = xs.iter().enumerate().find(|(idx, val)| val.as_str() == x) else {
+					anyhow::bail!("Item not found");
+				};
+				env.reset(idx)?;
+				let Some(output) = y.split("Output:\n").last() else {
+					anyhow::bail!("Y is empty or does not contain Output:\n");
+				};
+
+				let skip = output.trim().lines().count() - 4;
+				let mut info = BTreeMap::new();
+				for (i, line) in output.trim().lines().skip(skip).enumerate() {
+					let word = line.split(' ').take(5).collect::<String>();
+					let repeat = 5 - word.chars().count();
+					let word = (word + " ").repeat(repeat);
+					let action = format!("h{i}. {word}");
+					info = env.step(&action)?;
+				}
+				Ok(info)
+			}
+			Task::Text { .. } | Task::Game24 { .. } => anyhow::bail!("Set status not implemented for Text and Game24"),
+		}
+	}
+
+	pub fn propose_prompt_wrap(&mut self, x: &str, y: &str) -> anyhow::Result<String> {
+		let task = self as *mut Task;
+		match self {
+			Task::MiniCrossword { env, .. } => {
+				unsafe { task.as_mut().unwrap() }.set_status(x, y)?;
+				Ok(strings::PROPOSE_PROMPT_CROSSWORDS.replace("{input}", env.render(None).as_str()))
+			}
+			Task::Game24 { .. } => {
+				let input = if !y.is_empty() { y } else { x };
+				let current_numbers = get_current_number(input);
+				let prompt = if matches!(current_numbers, Some("24")) {
+					strings::COT_PROMPT_GAME24.replace("{input}", x) + "Steps:" + y
+				} else {
+					strings::PROPOSE_PROMPT_GAME24.replace("{input}", current_numbers.unwrap_or(""))
+				};
+
+				Ok(prompt)
+			}
+			Task::Text { .. } => anyhow::bail!("Propose prompt not implemented for Text"),
+		}
+	}
+	pub fn standard_prompt_wrap(&self, x: &str, y: &str) -> String {
+		match self {
+			Task::MiniCrossword { .. } => {
+				let mut prompt = strings::STANDARD_PROMPT_CROSSWORDS.replace("{input}", x);
+				prompt.push_str(y);
+				prompt
+			}
+			Task::Game24 { .. } => {
+				let mut prompt = strings::STANDARD_PROMPT_GAME24.replace("{input}", x);
+				prompt.push_str(y);
+				prompt
+			}
+			Task::Text { .. } => {
+				let mut prompt = strings::STANDARD_PROMPT_TEXT.replace("{input}", x);
+				prompt.push_str(y);
+				prompt
+			}
+		}
+	}
+	pub fn cot_prompt_wrap(&self, x: &str, y: &str) -> String {
+		match self {
+			Task::MiniCrossword { .. } => {
+				let mut prompt = strings::COT_PROMPT_CROSSWORDS.replace("{input}", x);
+				prompt.push_str(y);
+				prompt
+			}
+			Task::Game24 { .. } => {
+				let mut prompt = strings::COT_PROMPT_GAME24.replace("{input}", x);
+				prompt.push_str(y);
+				prompt
+			}
+			Task::Text { .. } => {
+				let mut prompt = strings::COT_PROMPT_TEXT.replace("{input}", x);
+				prompt.push_str(y);
+				prompt
+			}
+		}
+	}
 }
 
 #[derive(Debug)]
@@ -274,6 +306,10 @@ impl MiniCrosswordEnv {
 		(0..5).for_each(|i| ans[i + 5] = board[i..].iter().enumerate().filter(|(idx, _)| (idx - i) % 5 == 0).map(|(_, s)| s.as_str()).collect::<String>());
 
 		ans
+	}
+
+	fn step(&self, _: &str) -> anyhow::Result<BTreeMap<String, isize>> {
+		unimplemented!()
 	}
 }
 

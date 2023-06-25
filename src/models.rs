@@ -1,23 +1,20 @@
-    use async_openai::{
-        error::OpenAIError,
-        types::{
-            ChatCompletionRequestMessage, ChatCompletionRequestMessageArgs,
-            CreateChatCompletionRequestArgs, CreateChatCompletionResponse, Role,
-        },
-        Client,
-    };
-    use backoff::future::retry;
-    use backoff::ExponentialBackoff;
-    
-    static mut COMPLETION_TOKENS: u32 = 0;
-    static mut PROMPT_TOKENS: u32 = 0;
+use async_openai::{
+	error::OpenAIError,
+	types::{ChatCompletionRequestMessage, ChatCompletionRequestMessageArgs, CreateChatCompletionRequestArgs, CreateChatCompletionResponse, Role},
+	Client,
+};
+use backoff::future::retry;
+use backoff::ExponentialBackoff;
+
+static mut COMPLETION_TOKENS: u32 = 0;
+static mut PROMPT_TOKENS: u32 = 0;
 
 pub async fn completions_with_backoff(
 	model: Option<&str>,
 	messages: &Vec<ChatCompletionRequestMessage>,
 	temperature: Option<f32>,
 	max_tokens: Option<u16>,
-	n: Option<u8>,
+	n: Option<isize>,
 	stop: Option<&str>,
 ) -> Result<CreateChatCompletionResponse, OpenAIError> {
 	let client = Client::new();
@@ -26,7 +23,7 @@ pub async fn completions_with_backoff(
 		.model(model.unwrap_or("gpt-4"))
 		.temperature(temperature.unwrap_or(0.7))
 		.max_tokens(max_tokens.unwrap_or(1000))
-		.n(n.unwrap_or(1))
+		.n(n.unwrap_or(1) as u8)
 		.messages(messages.to_owned());
 
 	stop.map(|stop| request_builder.stop(stop));
@@ -39,13 +36,13 @@ pub async fn completions_with_backoff(
 	.await
 }
 
-pub async fn gpt(prompt: &str, model: Option<&str>, temperature: Option<f32>, max_tokens: Option<u16>, n: Option<u8>, stop: Option<&str>) -> Vec<String> {
+pub async fn gpt(prompt: &str, model: Option<&str>, temperature: Option<f32>, max_tokens: Option<u16>, n: Option<isize>, stop: Option<&str>) -> Vec<String> {
 	let mut messages: Vec<ChatCompletionRequestMessage> = Vec::new();
 	messages.push(ChatCompletionRequestMessageArgs::default().role(Role::User).content(prompt).build().unwrap());
 	chatgpt(messages, model.unwrap_or("gpt_4"), temperature.unwrap_or(0.7), max_tokens.unwrap_or(1000), n.unwrap_or(1), stop).await
 }
 
-pub async fn chatgpt(messages: Vec<ChatCompletionRequestMessage>, model: &str, temperature: f32, max_tokens: u16, mut n: u8, stop: Option<&str>) -> Vec<String> {
+pub async fn chatgpt(messages: Vec<ChatCompletionRequestMessage>, model: &str, temperature: f32, max_tokens: u16, mut n: isize, stop: Option<&str>) -> Vec<String> {
 	let mut outputs = Vec::new();
 	while n > 0 {
 		let cnt = n.min(20);
