@@ -1,7 +1,7 @@
 use anyhow::Ok;
 
-use crate::{models::gpt, strings};
-use std::{collections::BTreeMap, path::Path};
+use crate::{ strings, models::gpt};
+use std::{collections::BTreeMap, path::Path, option};
 
 pub const DATA_PATH: &str = "./data";
 
@@ -47,7 +47,7 @@ impl Task {
 		}
 	}
 
-	async fn get_value(&mut self, x: &str, y: &str, n_evaluate_sample: isize, cache_value: bool) -> anyhow::Result<f32> {
+	async fn get_value(&mut self, x: &str, y: &str,model: Option<&str>, n_evaluate_sample: isize, cache_value: bool) -> anyhow::Result<f32> {
 		match self {
 			Task::Game24 { ref mut value_cache, .. } => {
 				let last_line = y.trim().lines().last().unwrap_or("");
@@ -62,7 +62,7 @@ impl Task {
 				if cache_value && value_cache.contains_key(&value_prompt) {
 					return value_cache.get(&value_prompt).ok_or(anyhow::anyhow!("Value not found in cache")).cloned();
 				} else {
-					let outputs = gpt(&value_prompt, None, None, None, Some(n_evaluate_sample), None).await;
+					let outputs = gpt(&value_prompt,model , None, None, Some(n_evaluate_sample), None).await;
 					let value = if y.trim().lines().count() == 4 && !y.to_lowercase().contains("answer") {
 						0f32
 					} else {
@@ -84,7 +84,7 @@ impl Task {
 		}
 	}
 
-	pub async fn get_values(&mut self, x: &str, ys: &[String], n_evaluate_sample: isize, cache_value: Option<bool>) -> anyhow::Result<Vec<f32>> {
+	pub async fn get_values(&mut self, x: &str, ys: &[String],model :Option<&str>, n_evaluate_sample: isize, cache_value: Option<bool>) -> anyhow::Result<Vec<f32>> {
 		let mut values = vec![];
 		let mut local_value_cache = BTreeMap::new();
 
@@ -92,7 +92,7 @@ impl Task {
 			if local_value_cache.contains_key(y) {
 				values.push(0f32);
 			} else {
-				let value = self.get_value(x, y, n_evaluate_sample, cache_value.unwrap_or(true)).await?;
+				let value = self.get_value(x, y, model,n_evaluate_sample, cache_value.unwrap_or(true)).await?;
 				local_value_cache.insert(y.to_string(), value);
 				values.push(value);
 			}
@@ -101,23 +101,24 @@ impl Task {
 		Ok(values)
 	}
 
-	pub async fn get_samples(&self, x: &str, y: &str, n_generate_sample: isize, prompt_sample: &str, stop: Option<&str>) -> anyhow::Result<Vec<String>> {
+	pub async fn get_samples(&self, x: &str,y: &str,model :Option<&str>, n_generate_sample: isize, prompt_sample: &str, stop: Option<&str>) -> anyhow::Result<Vec<String>> {
 		let prompt = match prompt_sample {
 			"standard" => self.standard_prompt_wrap(x, y),
 			"cot" => self.cot_prompt_wrap(x, y),
 			sample => anyhow::bail!("Prompt sample {} not recognized", sample),
 		};
 
-		let samples = gpt(&prompt, None, None, None, Some(n_generate_sample), stop).await;
+		let samples = gpt(&prompt, model, None, None, Some(n_generate_sample), stop).await;
 		Ok(samples.iter().map(|s| format!("{y}{s}")).collect())
 	}
 
 	pub fn get_votes(&self, x: &str, ys: &[String], n_evaluate_sample: isize) -> anyhow::Result<Vec<f32>> {
-		unimplemented!()
+		// let vote_prompt = self.vs
+		todo!()
 	}
-	pub async fn get_proposals(&mut self, x: &str, y: &str) -> anyhow::Result<Vec<String>> {
+	pub async fn get_proposals(&mut self, x: &str, y: &str,model:Option<&str>) -> anyhow::Result<Vec<String>> {
 		let propose_prompt = self.propose_prompt_wrap(x, y)?;
-		let output = gpt(&propose_prompt, None, None, None, Some(1), None).await;
+		let output = gpt(&propose_prompt, model, None, None, Some(1), None).await;
 		let Some(outputs) = output.first() else {
 			anyhow::bail!("No outputs found");
 		};

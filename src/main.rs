@@ -6,6 +6,8 @@ mod models;
 mod strings;
 mod tasks;
 
+#[derive(Debug)]
+
 struct InfoData {
 	step: i32,
 	x: String,
@@ -16,7 +18,7 @@ struct InfoData {
 }
 
 struct Opts {
-	backend: String,
+	backend: Option<String>,
 	temperature: f64,
 
 	task: String,
@@ -43,7 +45,7 @@ fn parse_args() -> anyhow::Result<Opts> {
 	let backend = backend.unwrap_or_else(|| "gpt-4".to_string());
 
 	match backend.as_str() {
-		"gpt-4" | "gpt-3.5-turbo" => {}
+		"gpt-4" | "gpt-3.5-turbo" => {println!("Using backend: {}", backend)}
 		_ => anyhow::bail!("Invalid backend: {}", backend),
 	}
 
@@ -84,9 +86,8 @@ fn parse_args() -> anyhow::Result<Opts> {
 	let n_generate_sample = args.opt_value_from_str("--n_generate_sample")?.unwrap_or(1);
 	let n_evaluate_sample = args.opt_value_from_str("--n_evaluate_sample")?.unwrap_or(1);
 	let n_select_sample = args.opt_value_from_str("--n_select_sample")?.unwrap_or(1);
-
 	Ok(Opts {
-		backend,
+		backend:Some(backend),
 		temperature,
 		task,
 		task_file_path,
@@ -111,12 +112,12 @@ async fn main() -> anyhow::Result<()> {
 	let mut logs = vec![()];
 	let mut cnt_avg = 0i64;
 	let mut cnt_any = 0i64;
-
+    println!("option naive: {:?}", options.naive_run);
 	let file = if options.naive_run {
 		format!(
 			"logs/{}/{}_{}_naive_{}_sample_{}_start{}_end{}.json",
 			options.task,
-			options.backend,
+			options.backend.clone().unwrap_or("gpt-4".into()),
 			options.temperature,
 			options.prompt_sample.clone().unwrap_or("none".into()),
 			options.n_generate_sample,
@@ -127,7 +128,7 @@ async fn main() -> anyhow::Result<()> {
 		format!(
 			"logs/{}/{}_{}_{}_sample_{}_start{}_end{}.json",
 			options.task,
-			options.backend,
+			options.backend.clone().unwrap_or("gpt-4".into()),
 			options.temperature,
 			options.prompt_sample.clone().unwrap_or("none".into()),
 			options.n_generate_sample,
@@ -144,7 +145,7 @@ async fn main() -> anyhow::Result<()> {
 		let (ys, infos) = if options.naive_run {
 			let x = task.get_input(i as usize)?;
 			let ys = task
-				.get_samples(&x, "", options.n_evaluate_sample, options.prompt_sample.as_ref().map(|s| s.as_str()).unwrap_or(""), None)
+				.get_samples(&x, "", options.backend.as_deref(),options.n_evaluate_sample, options.prompt_sample.as_ref().map(|s| s.as_str()).unwrap_or(""), None)
 				.await?;
 			(ys, None)
 		} else {
@@ -152,12 +153,12 @@ async fn main() -> anyhow::Result<()> {
 			let mut ys = vec![String::new()];
 			let mut infos = Vec::<InfoData>::new();
 			for step in 0..task.get_steps() {
-				let new_ys = match options.method_generate.as_ref().map(|s| s.as_str()) {
+				let new_ys = match options.method_generate.clone().as_ref().map(|s| s.as_str()) {
 					Some("sample") => {
 						let mut new_ys = Vec::new();
 						for y in &ys {
 							let new_y = task
-								.get_samples(&x, y, options.n_generate_sample, options.prompt_sample.as_ref().map(|s| s.as_str()).unwrap_or(""), None)
+								.get_samples(&x, y,options.backend.clone().as_deref(), options.n_generate_sample, options.prompt_sample.as_ref().map(|s| s.as_str()).unwrap_or(""), None)
 								.await?;
 							new_ys.extend(new_y);
 						}
@@ -166,7 +167,7 @@ async fn main() -> anyhow::Result<()> {
 					Some("propose") => {
 						let mut new_ys = Vec::new();
 						for y in &ys {
-							let new_y = task.get_proposals(&x, y).await?;
+							let new_y = task.get_proposals(&x, y,options.backend.as_deref()).await?;
 							new_ys.extend(new_y);
 						}
 						new_ys
@@ -176,10 +177,9 @@ async fn main() -> anyhow::Result<()> {
 				let ids = (0..new_ys.len()).collect::<Vec<_>>();
 				let values = match options.method_evaluate.as_ref().map(|s| s.as_str()) {
 					Some("votes") => task.get_votes(&x, &ys, options.n_evaluate_sample),
-					Some("value") => task.get_values(&x, &ys, options.n_evaluate_sample, None).await,
+					Some("value") => task.get_values(&x, &ys, options.backend.as_deref(),options.n_evaluate_sample, None).await,
 					ev => anyhow::bail!("Invalid method_evaluate: {:?}", ev),
 				}?;
-
 				let select_ids = match options.method_select.as_ref().map(|s| s.as_str()) {
 					Some("sample") => {
 						let sum = values.iter().sum::<f32>();
@@ -212,7 +212,7 @@ async fn main() -> anyhow::Result<()> {
 
 				ys = select_new_ys;
 			}
-
+			println!("infos: {:?}", infos);
 			(ys, Some(infos))
 		};
 

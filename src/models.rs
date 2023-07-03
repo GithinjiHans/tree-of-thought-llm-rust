@@ -10,7 +10,7 @@ static mut COMPLETION_TOKENS: u32 = 0;
 static mut PROMPT_TOKENS: u32 = 0;
 
 pub async fn completions_with_backoff(
-	model: Option<&str>,
+	model:&str,
 	messages: &Vec<ChatCompletionRequestMessage>,
 	temperature: Option<f32>,
 	max_tokens: Option<u16>,
@@ -20,7 +20,7 @@ pub async fn completions_with_backoff(
 	let client = Client::new();
 	let mut request_builder = CreateChatCompletionRequestArgs::default();
 	request_builder
-		.model(model.unwrap_or("gpt-4"))
+		.model(model)
 		.temperature(temperature.unwrap_or(0.7))
 		.max_tokens(max_tokens.unwrap_or(1000))
 		.n(n.unwrap_or(1) as u8)
@@ -30,7 +30,6 @@ pub async fn completions_with_backoff(
 	let request = request_builder.build().unwrap();
 
 	retry(ExponentialBackoff::default(), || async {
-		println!("Fetching {:?}", model);
 		Ok(client.chat().create(request.clone()).await?)
 	})
 	.await
@@ -47,10 +46,10 @@ pub async fn chatgpt(messages: Vec<ChatCompletionRequestMessage>, model: &str, t
 	while n > 0 {
 		let cnt = n.min(20);
 		n -= cnt;
-		let res = completions_with_backoff(Some(model), &messages, Some(temperature), Some(max_tokens), Some(cnt), stop).await.unwrap();
+		let res = completions_with_backoff(model, &messages, Some(temperature), Some(max_tokens), Some(cnt), stop).await.unwrap();
 
 		outputs.extend(res.choices.iter().map(|choice| choice.message.content.to_owned()));
-
+        
 		// log completion tokens
 		unsafe {
 			COMPLETION_TOKENS += res.usage.clone().unwrap().completion_tokens;
