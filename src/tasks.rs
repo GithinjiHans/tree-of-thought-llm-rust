@@ -377,7 +377,7 @@ pub(crate) fn get_task(name: &str, file_path: &str) -> anyhow::Result<Task> {
 				steps: 2,
 			}
 		}
-		"mini_crossword" => {
+		"crosswords" => {
 			let mut env = MiniCrosswordEnv::new(Some(file_path))?;
 			let mut xs = vec![];
 
