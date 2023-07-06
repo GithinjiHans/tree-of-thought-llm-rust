@@ -141,7 +141,7 @@ async fn main() -> anyhow::Result<()> {
 
 	for i in options.task_start_index..options.task_end_index {
 		// solve
-		let (ys, infos) = if options.naive_run {
+		let (ys, info) = if options.naive_run {
 			let x = task.get_input(i as usize)?;
 			let ys = task
 				.get_samples(&x, "", options.backend.as_deref(),options.n_evaluate_sample, options.prompt_sample.as_ref().map(|s| s.as_str()).unwrap_or(""), None)
@@ -150,7 +150,7 @@ async fn main() -> anyhow::Result<()> {
 		} else {
 			let x = task.get_input(i as usize)?;
 			let mut ys = vec![String::new()];
-			let mut infos = Vec::<InfoData>::new();
+			let mut info = Vec::<InfoData>::new();
 			for step in 0..task.get_steps() {
 				let new_ys = match options.method_generate.clone().as_ref().map(|s| s.as_str()) {
 					Some("sample") => {
@@ -175,7 +175,7 @@ async fn main() -> anyhow::Result<()> {
 				};
 				let ids = (0..new_ys.len()).collect::<Vec<_>>();
 				let values = match options.method_evaluate.as_ref().map(|s| s.as_str()) {
-					Some("votes") => task.get_votes(&x, &ys, options.n_evaluate_sample).await,
+					Some("vote") => task.get_votes(&x, &ys, options.n_evaluate_sample).await,
 					Some("value") => task.get_values(&x, &ys, options.backend.as_deref(),options.n_evaluate_sample, None).await,
 					ev => anyhow::bail!("Invalid method_evaluate: {:?}", ev),
 				}?;
@@ -199,8 +199,8 @@ async fn main() -> anyhow::Result<()> {
 				let select_new_ys = select_ids.iter().map(|id| new_ys[*id as usize].clone()).collect::<Vec<_>>();
 
 				// log unimplemented
-
-				infos.push(InfoData {
+                
+				info.push(InfoData {
 					step: step.try_into().unwrap(),
 					x: x.clone(),
 					ys: ys.clone(),
@@ -211,14 +211,12 @@ async fn main() -> anyhow::Result<()> {
 
 				ys = select_new_ys;
 			}
-			println!("infos: {:?}", infos);
-			(ys, Some(infos))
+			println!("info: {:?}", info);
+			(ys, Some(info))
 		};
 
-		
 		// log
-		// todo!()
-
+        
 		// log main metric
 	}
 
