@@ -56,7 +56,7 @@ impl Task {
 					strings::VALUE_LAST_STEP_PROMPT.replace("{input}", x).replace("{ans}", &ans)
 				} else {
 					let current_numbers = get_current_number(y).unwrap();
-					strings::VALUE_PROMPT.replace("{input}", current_numbers)
+					strings::VALUE_PROMPT_GAME24.replace("{input}", current_numbers)
 				};
 
 				if cache_value && value_cache.contains_key(&value_prompt) {
@@ -112,10 +112,7 @@ impl Task {
 		Ok(samples.iter().map(|s| format!("{y}{s}")).collect())
 	}
 
-	pub fn get_votes(&self, x: &str, ys: &[String], n_evaluate_sample: isize) -> anyhow::Result<Vec<f32>> {
-		// let vote_prompt = self.vs
-		todo!()
-	}
+	
 	pub async fn get_proposals(&mut self, x: &str, y: &str,model:Option<&str>) -> anyhow::Result<Vec<String>> {
 		let propose_prompt = self.propose_prompt_wrap(x, y)?;
 		let output = gpt(&propose_prompt, model, None, None, Some(1), None).await;
@@ -208,6 +205,9 @@ impl Task {
 				prompt
 			}
 		}
+	}
+	pub fn vote_prompt_wrap(){
+		todo!();
 	}
 }
 
