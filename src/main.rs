@@ -82,7 +82,6 @@ fn parse_args() -> anyhow::Result<Opts> {
 		Some("sample" | "greedy") | None => {}
 		sample => anyhow::bail!("Invalid method_select: {:?}", sample),
 	}
-
 	let n_generate_sample = args.opt_value_from_str("--n_generate_sample")?.unwrap_or(1);
 	let n_evaluate_sample = args.opt_value_from_str("--n_evaluate_sample")?.unwrap_or(1);
 	let n_select_sample = args.opt_value_from_str("--n_select_sample")?.unwrap_or(1);
@@ -176,7 +175,7 @@ async fn main() -> anyhow::Result<()> {
 				};
 				let ids = (0..new_ys.len()).collect::<Vec<_>>();
 				let values = match options.method_evaluate.as_ref().map(|s| s.as_str()) {
-					Some("votes") => task.get_votes(&x, &ys, options.n_evaluate_sample),
+					Some("votes") => task.get_votes(&x, &ys, options.n_evaluate_sample).await,
 					Some("value") => task.get_values(&x, &ys, options.backend.as_deref(),options.n_evaluate_sample, None).await,
 					ev => anyhow::bail!("Invalid method_evaluate: {:?}", ev),
 				}?;

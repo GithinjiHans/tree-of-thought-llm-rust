@@ -1,7 +1,8 @@
 use anyhow::Ok;
 
 use crate::{ strings, models::gpt};
-use std::{collections::BTreeMap, path::Path, option};
+use std::{collections::BTreeMap, path::Path};
+use regex::Regex;
 
 pub const DATA_PATH: &str = "./data";
 
@@ -112,7 +113,12 @@ impl Task {
 		Ok(samples.iter().map(|s| format!("{y}{s}")).collect())
 	}
 
-	
+	pub async fn get_votes(&self, x: &str, ys: &Vec<String>, n_evaluate_sample: isize) -> anyhow::Result<Vec<f32>> {
+			let vote_prompt = self.vote_prompt_wrap(x, ys);
+			let vote_outputs = gpt(&vote_prompt,Some("gpt-3.5-turbo"),None,None,Some(n_evaluate_sample),None).await;
+			let values = self.vote_outputs_unwrap(&vote_outputs, ys.len());
+			Ok(values)
+		}
 	pub async fn get_proposals(&mut self, x: &str, y: &str,model:Option<&str>) -> anyhow::Result<Vec<String>> {
 		let propose_prompt = self.propose_prompt_wrap(x, y)?;
 		let output = gpt(&propose_prompt, model, None, None, Some(1), None).await;
@@ -206,9 +212,31 @@ impl Task {
 			}
 		}
 	}
-	pub fn vote_prompt_wrap(){
-		todo!();
+	pub fn vote_prompt_wrap(&self, x: &str, ys: &Vec<String>)-> &str
+	{
+		return "Hello world";
 	}
+
+fn vote_outputs_unwrap(&self,vote_outputs: &[String], n_candidates: usize) -> Vec<f32> {
+    let mut vote_results = vec![0.0; n_candidates];
+
+    let pattern = Regex::new(r".*best choice is .*(\d+).*").unwrap();
+
+    for vote_output in vote_outputs {
+        if let Some(capture) = pattern.captures(vote_output) {
+            if let Some(vote) = capture.get(1).and_then(|m| m.as_str().parse::<usize>().ok()) {
+                if vote < n_candidates {
+                    vote_results[vote] += 1.0;
+                }
+            }
+        } else {
+            println!("vote no match: {}", vote_output);
+        }
+    }
+
+    vote_results
+}
+
 }
 
 #[derive(Debug)]
