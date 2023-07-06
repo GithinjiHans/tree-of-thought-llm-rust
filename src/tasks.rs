@@ -1,8 +1,9 @@
 use anyhow::Ok;
+use async_openai::types::Prompt;
 
-use crate::{ strings, models::gpt};
-use std::{collections::BTreeMap, path::Path};
+use crate::{models::gpt, strings::{self, SCORE_PROMPT_TEXT, VOTE_PROMPT_TEXT}};
 use regex::Regex;
+use std::{collections::{BTreeMap, HashMap}, path::Path, process::Output};
 
 pub const DATA_PATH: &str = "./data";
 
@@ -48,7 +49,7 @@ impl Task {
 		}
 	}
 
-	async fn get_value(&mut self, x: &str, y: &str,model: Option<&str>, n_evaluate_sample: isize, cache_value: bool) -> anyhow::Result<f32> {
+	async fn get_value(&mut self, x: &str, y: &str, model: Option<&str>, n_evaluate_sample: isize, cache_value: bool) -> anyhow::Result<f32> {
 		match self {
 			Task::Game24 { ref mut value_cache, .. } => {
 				let last_line = y.trim().lines().last().unwrap_or("");
@@ -63,7 +64,7 @@ impl Task {
 				if cache_value && value_cache.contains_key(&value_prompt) {
 					return value_cache.get(&value_prompt).ok_or(anyhow::anyhow!("Value not found in cache")).cloned();
 				} else {
-					let outputs = gpt(&value_prompt,model , None, None, Some(n_evaluate_sample), None).await;
+					let outputs = gpt(&value_prompt, model, None, None, Some(n_evaluate_sample), None).await;
 					let value = if y.trim().lines().count() == 4 && !y.to_lowercase().contains("answer") {
 						0f32
 					} else {
@@ -85,7 +86,7 @@ impl Task {
 		}
 	}
 
-	pub async fn get_values(&mut self, x: &str, ys: &[String],model :Option<&str>, n_evaluate_sample: isize, cache_value: Option<bool>) -> anyhow::Result<Vec<f32>> {
+	pub async fn get_values(&mut self, x: &str, ys: &[String], model: Option<&str>, n_evaluate_sample: isize, cache_value: Option<bool>) -> anyhow::Result<Vec<f32>> {
 		let mut values = vec![];
 		let mut local_value_cache = BTreeMap::new();
 
@@ -93,7 +94,7 @@ impl Task {
 			if local_value_cache.contains_key(y) {
 				values.push(0f32);
 			} else {
-				let value = self.get_value(x, y, model,n_evaluate_sample, cache_value.unwrap_or(true)).await?;
+				let value = self.get_value(x, y, model, n_evaluate_sample, cache_value.unwrap_or(true)).await?;
 				local_value_cache.insert(y.to_string(), value);
 				values.push(value);
 			}
@@ -102,7 +103,7 @@ impl Task {
 		Ok(values)
 	}
 
-	pub async fn get_samples(&self, x: &str,y: &str,model :Option<&str>, n_generate_sample: isize, prompt_sample: &str, stop: Option<&str>) -> anyhow::Result<Vec<String>> {
+	pub async fn get_samples(&self, x: &str, y: &str, model: Option<&str>, n_generate_sample: isize, prompt_sample: &str, stop: Option<&str>) -> anyhow::Result<Vec<String>> {
 		let prompt = match prompt_sample {
 			"standard" => self.standard_prompt_wrap(x, y),
 			"cot" => self.cot_prompt_wrap(x, y),
@@ -114,12 +115,12 @@ impl Task {
 	}
 
 	pub async fn get_votes(&self, x: &str, ys: &Vec<String>, n_evaluate_sample: isize) -> anyhow::Result<Vec<f32>> {
-			let vote_prompt = self.vote_prompt_wrap(x, ys);
-			let vote_outputs = gpt(&vote_prompt,Some("gpt-3.5-turbo"),None,None,Some(n_evaluate_sample),None).await;
-			let values = self.vote_outputs_unwrap(&vote_outputs, ys.len());
-			Ok(values)
-		}
-	pub async fn get_proposals(&mut self, x: &str, y: &str,model:Option<&str>) -> anyhow::Result<Vec<String>> {
+		let vote_prompt = self.vote_prompt_wrap(x, ys);
+		let vote_outputs = gpt(&vote_prompt, Some("gpt-3.5-turbo"), None, None, Some(n_evaluate_sample), None).await;
+		let values = self.vote_outputs_unwrap(&vote_outputs, ys.len());
+		Ok(values)
+	}
+	pub async fn get_proposals(&mut self, x: &str, y: &str, model: Option<&str>) -> anyhow::Result<Vec<String>> {
 		let propose_prompt = self.propose_prompt_wrap(x, y)?;
 		let output = gpt(&propose_prompt, model, None, None, Some(1), None).await;
 		let Some(outputs) = output.first() else {
@@ -193,6 +194,39 @@ impl Task {
 			}
 		}
 	}
+	pub async  fn test_output(&self, idx: i32, output: &str)->HashMap<String, Vec<i32>>
+	 {
+		match self {
+			Task::Game24 { .. } => {
+             todo!();
+			},
+			Task::Text { .. } => {
+				let output = output.split("Passage:\n").last().unwrap_or("");
+				let mut info: HashMap<String, Vec<i32>> = HashMap::new();
+				let prompt = SCORE_PROMPT_TEXT.to_owned() + output;
+				let score_outputs = gpt(&prompt,Some("gpt-3.5-turbo"),None, None, None, None).await;
+				let mut scores: Vec<i32>= vec![];
+				let pattern = Regex::new(r".*coherency score is (\d+).*").unwrap();
+				for score_output in score_outputs {
+				  if let Some(captures) = pattern.captures(&score_output) {
+					  if let Some(score) = captures.get(1).and_then(|m| m.as_str().parse::<i32>().ok()) {
+						  scores.push(score);
+					  } else {
+						  println!("------------------score no match: {}", score_output);
+					  }
+				  }
+			  }
+			  println!("{:?}", scores);
+			  info.insert(String::from("rs"), scores.clone());
+			  info.insert(String::from("r"), if scores.is_empty() { vec![0] } else { vec![scores.iter().sum::<i32>() / scores.len() as i32] });
+		  
+			  info
+			},
+			Task::MiniCrossword { .. } => {
+			   todo!();
+			},
+		}
+	}
 	pub fn cot_prompt_wrap(&self, x: &str, y: &str) -> String {
 		match self {
 			Task::MiniCrossword { .. } => {
@@ -212,31 +246,34 @@ impl Task {
 			}
 		}
 	}
-	pub fn vote_prompt_wrap(&self, x: &str, ys: &Vec<String>)-> &str
-	{
-		return "Hello world";
+	pub fn vote_prompt_wrap(&self, x: &str, ys: &Vec<String>) -> String {
+		let mut  prompt = VOTE_PROMPT_TEXT.to_owned();
+		for (i, y) in ys.iter().enumerate() {
+			let choice_prompt = format!("Choice {}:\n{}\n", i + 1, y);
+			prompt += &choice_prompt;
+		}
+		return prompt;
 	}
 
-fn vote_outputs_unwrap(&self,vote_outputs: &[String], n_candidates: usize) -> Vec<f32> {
-    let mut vote_results = vec![0.0; n_candidates];
+	fn vote_outputs_unwrap(&self, vote_outputs: &[String], n_candidates: usize) -> Vec<f32> {
+		let mut vote_results = vec![0.0; n_candidates];
 
-    let pattern = Regex::new(r".*best choice is .*(\d+).*").unwrap();
+		let pattern = Regex::new(r".*best choice is .*(\d+).*").unwrap();
 
-    for vote_output in vote_outputs {
-        if let Some(capture) = pattern.captures(vote_output) {
-            if let Some(vote) = capture.get(1).and_then(|m| m.as_str().parse::<usize>().ok()) {
-                if vote < n_candidates {
-                    vote_results[vote] += 1.0;
-                }
-            }
-        } else {
-            println!("vote no match: {}", vote_output);
-        }
-    }
+		for vote_output in vote_outputs {
+			if let Some(capture) = pattern.captures(vote_output) {
+				if let Some(vote) = capture.get(1).and_then(|m| m.as_str().parse::<usize>().ok()) {
+					if vote < n_candidates {
+						vote_results[vote] += 1.0;
+					}
+				}
+			} else {
+				println!("vote no match: {}", vote_output);
+			}
+		}
 
-    vote_results
-}
-
+		vote_results
+	}
 }
 
 #[derive(Debug)]
