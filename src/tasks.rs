@@ -195,34 +195,33 @@ impl Task {
 			}
 		}
 	}
-	pub async  fn test_output(&self, idx: i32, output: &str)->HashMap<String, Vec<i32>>
+	pub async  fn test_output(&self, idx: i32, output: &str)->BTreeMap<String, Vec<isize>>
 	 {
 		match self {
 			Task::Game24 { .. } => {
              todo!();
 			},
 			Task::Text { .. } => {
-			// 	let output = output.split("Passage:\n").last().unwrap_or("");
-			// 	let mut info: HashMap<String, Vec<i32>> = HashMap::new();
-			// 	let prompt = SCORE_PROMPT_TEXT.to_owned() + output;
-			// 	let score_outputs = gpt(&prompt,Some("gpt-3.5-turbo"),None, None, None, None).await;
-			// 	let mut scores: Vec<i32>= vec![];
-			// 	let pattern = Regex::new(r".*coherency score is (\d+).*").unwrap();
-			// 	for score_output in score_outputs {
-			// 	  if let Some(captures) = pattern.captures(&score_output) {
-			// 		  if let Some(score) = captures.get(1).and_then(|m| m.as_str().parse::<i32>().ok()) {
-			// 			  scores.push(score);
-			// 		  } else {
-			// 			  println!("------------------score no match: {}", score_output);
-			// 		  }
-			// 	  }
-			//   }
-			//   println!("{:?}", scores);
-			//   info.insert(String::from("rs"), scores.clone());
-			//   info.insert(String::from("r"), if scores.is_empty() { vec![0] } else { vec![scores.iter().sum::<i32>() / scores.len() as i32] });
+				let output = output.split("Passage:\n").last().unwrap_or("");
+				let mut info: BTreeMap<String, Vec<isize>> = BTreeMap::new();
+				let prompt = SCORE_PROMPT_TEXT.to_owned() + output;
+				let score_outputs = gpt(&prompt,Some("gpt-3.5-turbo"),None, None, None, None).await;
+				let mut scores: Vec<isize>= vec![];
+				let pattern = Regex::new(r".*coherency score is (\d+).*").unwrap();
+				for score_output in score_outputs {
+				  if let Some(captures) = pattern.captures(&score_output) {
+					  if let Some(score) = captures.get(1).and_then(|m| m.as_str().parse::<isize>().ok()) {
+						  scores.push(score);
+					  } else {
+						  println!("------------------score no match: {}", score_output);
+					  }
+				  }
+			  }
+			  println!("{:?}", scores);
+			  info.insert(String::from("rs"), scores.clone());
+			  info.insert(String::from("r"), if scores.is_empty() { vec![0] } else { vec![scores.iter().sum::<isize>() / scores.len() as isize] });
 		  
-			//   info
-			  todo!()
+			  info
 			},
 			Task::MiniCrossword { .. } => {
 
