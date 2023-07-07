@@ -134,6 +134,7 @@ impl Task {
 				let Some((idx, _)) = xs.iter().enumerate().find(|(idx, val)| val.as_str() == x) else {
 					anyhow::bail!("Item not found");
 				};
+				// MiniCrossword test output
 				env.reset(idx)?;
 				let Some(output) = y.split("Output:\n").last() else {
 					anyhow::bail!("Y is empty or does not contain Output:\n");
@@ -201,28 +202,30 @@ impl Task {
              todo!();
 			},
 			Task::Text { .. } => {
-				let output = output.split("Passage:\n").last().unwrap_or("");
-				let mut info: HashMap<String, Vec<i32>> = HashMap::new();
-				let prompt = SCORE_PROMPT_TEXT.to_owned() + output;
-				let score_outputs = gpt(&prompt,Some("gpt-3.5-turbo"),None, None, None, None).await;
-				let mut scores: Vec<i32>= vec![];
-				let pattern = Regex::new(r".*coherency score is (\d+).*").unwrap();
-				for score_output in score_outputs {
-				  if let Some(captures) = pattern.captures(&score_output) {
-					  if let Some(score) = captures.get(1).and_then(|m| m.as_str().parse::<i32>().ok()) {
-						  scores.push(score);
-					  } else {
-						  println!("------------------score no match: {}", score_output);
-					  }
-				  }
-			  }
-			  println!("{:?}", scores);
-			  info.insert(String::from("rs"), scores.clone());
-			  info.insert(String::from("r"), if scores.is_empty() { vec![0] } else { vec![scores.iter().sum::<i32>() / scores.len() as i32] });
+			// 	let output = output.split("Passage:\n").last().unwrap_or("");
+			// 	let mut info: HashMap<String, Vec<i32>> = HashMap::new();
+			// 	let prompt = SCORE_PROMPT_TEXT.to_owned() + output;
+			// 	let score_outputs = gpt(&prompt,Some("gpt-3.5-turbo"),None, None, None, None).await;
+			// 	let mut scores: Vec<i32>= vec![];
+			// 	let pattern = Regex::new(r".*coherency score is (\d+).*").unwrap();
+			// 	for score_output in score_outputs {
+			// 	  if let Some(captures) = pattern.captures(&score_output) {
+			// 		  if let Some(score) = captures.get(1).and_then(|m| m.as_str().parse::<i32>().ok()) {
+			// 			  scores.push(score);
+			// 		  } else {
+			// 			  println!("------------------score no match: {}", score_output);
+			// 		  }
+			// 	  }
+			//   }
+			//   println!("{:?}", scores);
+			//   info.insert(String::from("rs"), scores.clone());
+			//   info.insert(String::from("r"), if scores.is_empty() { vec![0] } else { vec![scores.iter().sum::<i32>() / scores.len() as i32] });
 		  
-			  info
+			//   info
+			  todo!()
 			},
 			Task::MiniCrossword { .. } => {
+
 			   todo!();
 			},
 		}
