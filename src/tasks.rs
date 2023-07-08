@@ -1,9 +1,16 @@
 use anyhow::Ok;
 use async_openai::types::Prompt;
 
-use crate::{models::gpt, strings::{self, SCORE_PROMPT_TEXT, VOTE_PROMPT_TEXT}};
+use crate::{
+	models::gpt,
+	strings::{self, SCORE_PROMPT_TEXT, VOTE_PROMPT_TEXT},
+};
 use regex::Regex;
-use std::{collections::{BTreeMap, HashMap}, path::Path, process::Output};
+use std::{
+	collections::{BTreeMap, HashMap},
+	path::Path,
+	process::Output,
+};
 
 pub const DATA_PATH: &str = "./data";
 
@@ -195,38 +202,61 @@ impl Task {
 			}
 		}
 	}
-	pub async  fn test_output(&self, idx: i32, output: &str)->BTreeMap<String, Vec<isize>>
-	 {
+	pub async fn test_output(self, idx: usize, output: &str) -> anyhow::Result<BTreeMap<String, Vec<isize>>> {
 		match self {
-			Task::Game24 { .. } => {
-             todo!();
-			},
+			Task::Game24 { data, .. } => {
+				let mut result: BTreeMap<String, Vec<isize>> = BTreeMap::new();
+				let expression = output.trim().split('\n').last().unwrap().to_lowercase().replace("answer: ", "").split('=').next().unwrap().to_string();
+
+				let numbers_regex = Regex::new(r"\d+").unwrap();
+				let mut numbers: Vec<String> = numbers_regex.find_iter(&expression).map(|m| m.as_str().to_string()).collect();
+
+				let mut problem_numbers: Vec<String> = numbers_regex.find_iter(data.get(idx).unwrap()).map(|m| m.as_str().to_string()).collect();
+				if numbers.sort() != problem_numbers.sort() {
+					result.insert("r".to_owned(), vec![0]);
+					Ok(result)
+				}
+				// else if  {
+				// 	todo!()
+				// }
+				else {
+					result.insert("r".to_owned(), vec![0]);
+					Ok(result)
+				}
+			}
 			Task::Text { .. } => {
 				let output = output.split("Passage:\n").last().unwrap_or("");
 				let mut info: BTreeMap<String, Vec<isize>> = BTreeMap::new();
 				let prompt = SCORE_PROMPT_TEXT.to_owned() + output;
-				let score_outputs = gpt(&prompt,Some("gpt-3.5-turbo"),None, None, None, None).await;
-				let mut scores: Vec<isize>= vec![];
+				let score_outputs = gpt(&prompt, Some("gpt-3.5-turbo"), None, None, None, None).await;
+				let mut scores: Vec<isize> = vec![];
 				let pattern = Regex::new(r".*coherency score is (\d+).*").unwrap();
 				for score_output in score_outputs {
-				  if let Some(captures) = pattern.captures(&score_output) {
-					  if let Some(score) = captures.get(1).and_then(|m| m.as_str().parse::<isize>().ok()) {
-						  scores.push(score);
-					  } else {
-						  println!("------------------score no match: {}", score_output);
-					  }
-				  }
-			  }
-			  println!("{:?}", scores);
-			  info.insert(String::from("rs"), scores.clone());
-			  info.insert(String::from("r"), if scores.is_empty() { vec![0] } else { vec![scores.iter().sum::<isize>() / scores.len() as isize] });
-		  
-			  info
-			},
-			Task::MiniCrossword { .. } => {
+					if let Some(captures) = pattern.captures(&score_output) {
+						if let Some(score) = captures.get(1).and_then(|m| m.as_str().parse::<isize>().ok()) {
+							scores.push(score);
+						} else {
+							println!("------------------score no match: {}", score_output);
+						}
+					}
+				}
+				println!("{:?}", scores);
+				info.insert(String::from("rs"), scores.clone());
+				info.insert(String::from("r"), if scores.is_empty() { vec![0] } else { vec![scores.iter().sum::<isize>() / scores.len() as isize] });
 
-			   todo!();
-			},
+				Ok(info)
+			}
+			Task::MiniCrossword { mut env, .. } => {
+				env.reset(idx);
+				let output = output.split("Output:\n").last().unwrap_or("");
+				let mut info: BTreeMap<String, Vec<isize>> = BTreeMap::new();
+				info.insert("r_word".to_owned(), vec![0]);
+				info.insert("r_letter".to_owned(), vec![0]);
+				info.insert("r_game".to_owned(), vec![0]);
+				//  todo (For loop)
+				info.insert("r".to_owned(), info["r_word"].clone());
+				Ok(info)
+			}
 		}
 	}
 	pub fn cot_prompt_wrap(&self, x: &str, y: &str) -> String {
@@ -249,7 +279,7 @@ impl Task {
 		}
 	}
 	pub fn vote_prompt_wrap(&self, x: &str, ys: &Vec<String>) -> String {
-		let mut  prompt = VOTE_PROMPT_TEXT.to_owned();
+		let mut prompt = VOTE_PROMPT_TEXT.to_owned();
 		for (i, y) in ys.iter().enumerate() {
 			let choice_prompt = format!("Choice {}:\n{}\n", i + 1, y);
 			prompt += &choice_prompt;
@@ -376,7 +406,28 @@ impl MiniCrosswordEnv {
 		ans
 	}
 
-	fn step(&self, _: &str) -> anyhow::Result<BTreeMap<String, isize>> {
+	fn step(&mut self, action: &str) -> anyhow::Result<BTreeMap<String, isize>> {
+		let mut action_parts = action.trim().split('\n').last().unwrap().split(". ");
+		let pos = action_parts.next();
+		let word = action_parts.next();
+
+		if pos.is_none() || word.is_none() {
+			anyhow::bail!("Invalid! Format should be like \"h1. apple\"")
+		}
+
+		let pos = pos.unwrap();
+		let word = word.unwrap();
+		if word.len() != 5 {
+			anyhow::bail!("Invalid! Word should have 5 letters.")
+		}
+		if pos.starts_with('h') {
+			let idx = pos[1..].parse::<usize>().unwrap() - 1;
+		// self.ext.board[idx*5]
+		} else if pos.starts_with('v') {
+			let idx = pos[1..].parse::<usize>().unwrap() - 1;
+
+			let idx = idx + 5; // for later status update
+		}
 		unimplemented!()
 	}
 }
