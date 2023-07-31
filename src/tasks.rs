@@ -135,7 +135,7 @@ impl Task {
 		};
 		Ok(outputs.lines().map(|o| format!("{}{}\n", y, o)).collect::<Vec<_>>())
 	}
-	pub fn set_status(&mut self, x: &str, y: &str) -> anyhow::Result<BTreeMap<String, isize>> {
+	pub fn set_status(&mut self, x: &str, y: &str) -> anyhow::Result<out> {
 		match self {
 			Task::MiniCrossword { env, xs, steps, cache_proposals } => {
 				let Some((idx, _)) = xs.iter().enumerate().find(|(idx, val)| val.as_str() == x) else {
@@ -148,13 +148,14 @@ impl Task {
 				};
 
 				let skip = output.trim().lines().count() - 4;
-				let mut info = BTreeMap::new();
+				let mut info=out { render:"".to_owned()
+					, r_all: true, all: false, letter: L { r_letter: 0.0, r_word: 0.0, r_game: true } };
 				for (i, line) in output.trim().lines().skip(skip).enumerate() {
 					let word = line.split(' ').take(5).collect::<String>();
 					let repeat = 5 - word.chars().count();
 					let word = (word + " ").repeat(repeat);
 					let action = format!("h{i}. {word}");
-					info = env.step(&action)?;
+					info = env.step(&action).expect("");
 				}
 				Ok(info)
 			}
@@ -312,7 +313,7 @@ struct L {
 	r_word: f32,
 	r_game: bool,
 }
-struct out {
+pub struct out {
 	render: String,
 	r_all: bool,
 	all: bool,
@@ -450,7 +451,7 @@ impl MiniCrosswordEnv {
 			.map(|(status, (letter, new_letter))| if letter != new_letter && *letter != "_" { 2 } else { *status })
 			.collect::<Vec<_>>();
 		self.ext.status[idx] = 1;
-		self.ext.ans = self.ext.new_ans;
+		self.ext.ans = self.ext.new_ans.clone();
 		let r_all = self.ext.board == self.ext.board_gt;
 		let test = out {
 			render: self.render(Some(true)),
