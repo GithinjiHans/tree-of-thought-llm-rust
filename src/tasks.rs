@@ -417,7 +417,7 @@ impl MiniCrosswordEnv {
 	}
 
 	fn step(&mut self, action: &str) -> anyhow::Result<out> {
-		let mut action_parts = action.trim().split('\n').last().unwrap().split(". ");
+		let mut action_parts = action.trim().split('\n').last().expect("Invalid! Format ").split(". ");
 		let pos = action_parts.next();
 		let word = action_parts.next();
 
@@ -442,13 +442,13 @@ impl MiniCrosswordEnv {
 			anyhow::bail!("Invalid! Position should be h1-h5 or v1-v5")
 		}
 		self.ext.new_ans = self.get_ans(&self.ext.board);
-		self.ext.status= self.ext.status.iter().zip(self.ext.ans.iter().zip(self.ext.new_ans.iter())).map(|(status, (letter, new_letter))| {
-            if letter != new_letter && *letter != "_" {
-                2
-            } else {
-                *status
-            }
-        }).collect::<Vec<_>>();
+		self.ext.status = self
+			.ext
+			.status
+			.iter()
+			.zip(self.ext.ans.iter().zip(self.ext.new_ans.iter()))
+			.map(|(status, (letter, new_letter))| if letter != new_letter && *letter != "_" { 2 } else { *status })
+			.collect::<Vec<_>>();
 		self.ext.status[idx] = 1;
 		self.ext.ans = self.ext.new_ans;
 		let r_all = self.ext.board == self.ext.board_gt;
