@@ -307,7 +307,17 @@ impl Task {
 		vote_results
 	}
 }
-
+struct L {
+	r_letter: f32,
+	r_word: f32,
+	r_game: bool,
+}
+struct out {
+	render: String,
+	r_all: bool,
+	all: bool,
+	letter: L,
+}
 #[derive(Debug)]
 pub struct MiniCrosswordEnv {
 	file: Vec<serde_json::Value>,
@@ -398,7 +408,7 @@ impl MiniCrosswordEnv {
 		})
 	}
 
-	fn get_ans(&self, board: &[String]) -> Vec<String> {
+	fn get_ans(&self, board: &Vec<String>) -> Vec<String> {
 		let mut ans = vec![String::new(); 10];
 		(0..5).for_each(|i| ans[i] = board[i * 5..(i + 1) * 5].join(""));
 		(0..5).for_each(|i| ans[i + 5] = board[i..].iter().enumerate().filter(|(idx, _)| (idx - i) % 5 == 0).map(|(_, s)| s.as_str()).collect::<String>());
@@ -406,7 +416,7 @@ impl MiniCrosswordEnv {
 		ans
 	}
 
-	fn step(&mut self, action: &str) -> anyhow::Result<BTreeMap<String, isize>> {
+	fn step(&mut self, action: &str) -> anyhow::Result<out> {
 		let mut action_parts = action.trim().split('\n').last().unwrap().split(". ");
 		let pos = action_parts.next();
 		let word = action_parts.next();
@@ -416,19 +426,43 @@ impl MiniCrosswordEnv {
 		}
 
 		let pos = pos.unwrap();
-		let word = word.unwrap();
+		let word = Box::new(word.unwrap().to_owned());
 		if word.len() != 5 {
 			anyhow::bail!("Invalid! Word should have 5 letters.")
 		}
+		let mut idx;
 		if pos.starts_with('h') {
-			let idx = pos[1..].parse::<usize>().unwrap() - 1;
-		// self.ext.board[idx*5]
+			idx = pos[1..].parse::<usize>().unwrap() - 1;
+			self.ext.board[idx * 5..(idx + 1) * 5].clone_from_slice(&word.chars().map(|c| c.to_string().to_uppercase()).collect::<Vec<_>>());
 		} else if pos.starts_with('v') {
-			let idx = pos[1..].parse::<usize>().unwrap() - 1;
-
-			let idx = idx + 5; // for later status update
+			idx = pos[1..].parse::<usize>().unwrap() - 1;
+			self.ext.board[idx..5].clone_from_slice(word.chars().map(|c| c.to_string().to_uppercase()).collect::<Vec<_>>().as_slice());
+			idx += 5; // for later status update
+		} else {
+			anyhow::bail!("Invalid! Position should be h1-h5 or v1-v5")
 		}
-		unimplemented!()
+		self.ext.new_ans = self.get_ans(&self.ext.board);
+		self.ext.status= self.ext.status.iter().zip(self.ext.ans.iter().zip(self.ext.new_ans.iter())).map(|(status, (letter, new_letter))| {
+            if letter != new_letter && *letter != "_" {
+                2
+            } else {
+                *status
+            }
+        }).collect::<Vec<_>>();
+		self.ext.status[idx] = 1;
+		self.ext.ans = self.ext.new_ans;
+		let r_all = self.ext.board == self.ext.board_gt;
+		let test = out {
+			render: self.render(Some(true)),
+			r_all,
+			all: r_all || self.ext.steps >= 20,
+			letter: L {
+				r_letter: (self.ext.board.iter().zip(self.ext.board_gt.iter()).filter(|y| y.0 == y.1).count() / 25) as f32,
+				r_word: (self.ext.ans.iter().zip(self.ext.ans_gt.iter()).filter(|y| y.0 == y.1).count() / 25) as f32,
+				r_game: r_all,
+			},
+		};
+		Ok(test)
 	}
 }
 
@@ -438,6 +472,7 @@ pub struct MiniCrosswordEnvExt {
 	board_gt: Vec<String>,
 	board: Vec<String>,
 	ans: Vec<String>,
+	new_ans: Vec<String>,
 	ans_gt: Vec<String>,
 	steps: isize,
 	status: Vec<isize>,
