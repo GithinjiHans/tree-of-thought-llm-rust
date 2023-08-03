@@ -35,6 +35,19 @@ pub(crate) enum Task {
 	},
 }
 
+pub struct TOutput{
+r_letter:f32,
+r_word:f32,
+r_game:bool,
+r:f32,
+rs:Vec<isize>,
+}
+impl TOutput{
+	pub fn new()->TOutput{
+      TOutput { r_letter: 0.0, r_word: 0.0, r_game: false, r: 0.0, rs: vec![] }
+	}
+}
+
 fn get_current_number(y: &str) -> Option<&str> {
 	y.trim().lines().last().unwrap_or("").split("left: ").last().unwrap_or("").split(')').next()
 }
@@ -135,7 +148,7 @@ impl Task {
 		};
 		Ok(outputs.lines().map(|o| format!("{}{}\n", y, o)).collect::<Vec<_>>())
 	}
-	pub fn set_status(&mut self, x: &str, y: &str) -> anyhow::Result<out> {
+	pub fn set_status(&mut self, x: &str, y: &str) -> anyhow::Result<TOutput> {
 		match self {
 			Task::MiniCrossword { env, xs, steps, cache_proposals } => {
 				let Some((idx, _)) = xs.iter().enumerate().find(|(idx, val)| val.as_str() == x) else {
@@ -148,14 +161,13 @@ impl Task {
 				};
 
 				let skip = output.trim().lines().count() - 4;
-				let mut info=out { render:"".to_owned()
-					, r_all: true, all: false, letter: L { r_letter: 0.0, r_word: 0.0, r_game: true } };
+				let mut info = TOutput::new();
 				for (i, line) in output.trim().lines().skip(skip).enumerate() {
 					let word = line.split(' ').take(5).collect::<String>();
 					let repeat = 5 - word.chars().count();
 					let word = (word + " ").repeat(repeat);
 					let action = format!("h{i}. {word}");
-					info = env.step(&action).expect("");
+					info = env.step(&action).expect("").letter;
 				}
 				Ok(info)
 			}
@@ -203,10 +215,10 @@ impl Task {
 			}
 		}
 	}
-	pub async fn test_output(self, idx: usize, output: &str) -> anyhow::Result<BTreeMap<String, Vec<isize>>> {
+	pub async fn test_output(self, idx: usize, output: &str) -> anyhow::Result<TOutput> {
 		match self {
 			Task::Game24 { data, .. } => {
-				let mut result: BTreeMap<String, Vec<isize>> = BTreeMap::new();
+				let mut result = TOutput::new();
 				let expression = output.trim().split('\n').last().unwrap().to_lowercase().replace("answer: ", "").split('=').next().unwrap().to_string();
 
 				let numbers_regex = Regex::new(r"\d+").unwrap();
@@ -214,20 +226,20 @@ impl Task {
 
 				let mut problem_numbers: Vec<String> = numbers_regex.find_iter(data.get(idx).unwrap()).map(|m| m.as_str().to_string()).collect();
 				if numbers.sort() != problem_numbers.sort() {
-					result.insert("r".to_owned(), vec![0]);
+					result.r=0.0;
 					Ok(result)
 				}
 				// else if  {
 				// 	todo!()
 				// }
 				else {
-					result.insert("r".to_owned(), vec![0]);
+					result.r = 0.0;
 					Ok(result)
 				}
 			}
 			Task::Text { .. } => {
 				let output = output.split("Passage:\n").last().unwrap_or("");
-				let mut info: BTreeMap<String, Vec<isize>> = BTreeMap::new();
+				let mut info = TOutput::new();
 				let prompt = SCORE_PROMPT_TEXT.to_owned() + output;
 				let score_outputs = gpt(&prompt, Some("gpt-3.5-turbo"), None, None, None, None).await;
 				let mut scores: Vec<isize> = vec![];
@@ -242,20 +254,30 @@ impl Task {
 					}
 				}
 				println!("{:?}", scores);
-				info.insert(String::from("rs"), scores.clone());
-				info.insert(String::from("r"), if scores.is_empty() { vec![0] } else { vec![scores.iter().sum::<isize>() / scores.len() as isize] });
-
+				// info.insert(String::from("rs"), scores.clone());
+				info.rs = scores.clone();
+				// info.insert(String::from("r"), if scores.is_empty() { vec![0] } else { vec![scores.iter().sum::<isize>() / scores.len() as isize] });
+                info.r= if scores.is_empty() { 0.0 } else {scores.iter().sum::<isize>() as f32/ scores.len() as f32};
 				Ok(info)
 			}
 			Task::MiniCrossword { mut env, .. } => {
 				env.reset(idx);
 				let output = output.split("Output:\n").last().unwrap_or("");
-				let mut info: BTreeMap<String, Vec<isize>> = BTreeMap::new();
-				info.insert("r_word".to_owned(), vec![0]);
-				info.insert("r_letter".to_owned(), vec![0]);
-				info.insert("r_game".to_owned(), vec![0]);
+				let mut info = TOutput::new();
 				//  todo (For loop)
-				info.insert("r".to_owned(), info["r_word"].clone());
+				let lines: Vec<&str> = output.trim().split('\n').collect();
+				let start_index = if lines.len() >= 5 { lines.len() - 5 } else { 0 };
+				let last_five_lines: Vec<&str> = lines[start_index..].to_vec();
+				for (i, line) in last_five_lines.iter().enumerate() {
+					let letters = line.split(' ').take(5).collect::<String>();
+					let word = letters;
+					let word_padded = format!("{}{}", word, "_".repeat(5 - word.len()));
+					let action = format!("h{}. {}", i, word_padded);
+					// println!("{}", action);
+					info = env.step(&action).expect("").letter;
+				}
+
+				info.r = info.r_word;
 				Ok(info)
 			}
 		}
@@ -317,7 +339,7 @@ pub struct out {
 	render: String,
 	r_all: bool,
 	all: bool,
-	letter: L,
+	letter: TOutput,
 }
 #[derive(Debug)]
 pub struct MiniCrosswordEnv {
@@ -457,11 +479,12 @@ impl MiniCrosswordEnv {
 			render: self.render(Some(true)),
 			r_all,
 			all: r_all || self.ext.steps >= 20,
-			letter: L {
-				r_letter: (self.ext.board.iter().zip(self.ext.board_gt.iter()).filter(|y| y.0 == y.1).count() / 25) as f32,
-				r_word: (self.ext.ans.iter().zip(self.ext.ans_gt.iter()).filter(|y| y.0 == y.1).count() / 25) as f32,
-				r_game: r_all,
-			},
+			letter: TOutput { r_letter:  (self.ext.board.iter().zip(self.ext.board_gt.iter()).filter(|y| y.0 == y.1).count() / 25) as f32,
+				 r_word: (self.ext.ans.iter().zip(self.ext.ans_gt.iter()).filter(|y| y.0 == y.1).count() / 25) as f32,
+				  r_game: r_all,
+				   r: 0.0,
+				    rs: vec![] 
+				},
 		};
 		Ok(test)
 	}
