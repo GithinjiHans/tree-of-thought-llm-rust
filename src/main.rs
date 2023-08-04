@@ -1,12 +1,13 @@
+use crate::models::gpt_usage;
 use rand::distributions::{Distribution, WeightedIndex};
-use rand::Rng;
 use std::path::Path;
+use tasks::TOutput;
 
 mod models;
 mod strings;
 mod tasks;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, serde::Serialize)]
 
 struct InfoData {
 	step: i32,
@@ -15,6 +16,40 @@ struct InfoData {
 	new_ys: Vec<String>,
 	values: Vec<f32>,
 	select_new_ys: Vec<String>,
+}
+#[derive(Debug, Clone, serde::Serialize)]
+
+struct AllInfo {
+	steps: InfoData,
+	idx: isize,
+	ys: Vec<String>,
+	infos: Vec<TOutput>,
+	usage_so_far: (u32, u32, f64),
+}
+
+impl AllInfo {
+	fn new() -> Self {
+		AllInfo {
+			steps: InfoData::new(),
+			idx: 0,
+			ys: vec![],
+			infos: vec![],
+			usage_so_far: (0, 0, 0f64),
+		}
+	}
+}
+
+impl InfoData {
+	fn new() -> Self {
+		InfoData {
+			step: 0,
+			x: String::new(),
+			ys: vec![],
+			new_ys: Vec::new(),
+			values: Vec::new(),
+			select_new_ys: Vec::new(),
+		}
+	}
 }
 
 struct Opts {
@@ -45,7 +80,9 @@ fn parse_args() -> anyhow::Result<Opts> {
 	let backend = backend.unwrap_or_else(|| "gpt-4".to_string());
 
 	match backend.as_str() {
-		"gpt-4" | "gpt-3.5-turbo" => {println!("Using backend: {}", backend)}
+		"gpt-4" | "gpt-3.5-turbo" => {
+			println!("Using backend: {}", backend)
+		}
 		_ => anyhow::bail!("Invalid backend: {}", backend),
 	}
 
@@ -86,7 +123,7 @@ fn parse_args() -> anyhow::Result<Opts> {
 	let n_evaluate_sample = args.opt_value_from_str("--n_evaluate_sample")?.unwrap_or(1);
 	let n_select_sample = args.opt_value_from_str("--n_select_sample")?.unwrap_or(1);
 	Ok(Opts {
-		backend:Some(backend),
+		backend: Some(backend),
 		temperature,
 		task,
 		task_file_path,
@@ -108,10 +145,11 @@ async fn main() -> anyhow::Result<()> {
 	let options = parse_args()?;
 	let mut task = tasks::get_task(&options.task, &options.task_file_path)?;
 
-	let mut logs = vec![()];
-	let mut cnt_avg = 0i64;
+	let mut logs = vec![];
+	let mut cnt_avg = 0.0;
 	let mut cnt_any = 0i64;
-    println!("option naive: {:?}", options.naive_run);
+	let mut all_info = AllInfo::new();
+	println!("option naive: {:?}", options.naive_run);
 	let file = if options.naive_run {
 		format!(
 			"logs/{}/{}_{}_naive_{}_sample_{}_start{}_end{}.json",
@@ -144,20 +182,34 @@ async fn main() -> anyhow::Result<()> {
 		let (ys, info) = if options.naive_run {
 			let x = task.get_input(i as usize)?;
 			let ys = task
-				.get_samples(&x, "", options.backend.as_deref(),options.n_evaluate_sample, options.prompt_sample.as_ref().map(|s| s.as_str()).unwrap_or(""), None)
+				.get_samples(
+					&x,
+					"",
+					options.backend.clone().as_deref(),
+					options.n_evaluate_sample,
+					options.prompt_sample.as_ref().map(|s| s.as_str()).unwrap_or(""),
+					None,
+				)
 				.await?;
 			(ys, None)
 		} else {
 			let x = task.get_input(i as usize)?;
 			let mut ys = vec![String::new()];
-			let mut info = Vec::<InfoData>::new();
+			let mut info = InfoData::new();
 			for step in 0..task.get_steps() {
 				let new_ys = match options.method_generate.clone().as_ref().map(|s| s.as_str()) {
 					Some("sample") => {
 						let mut new_ys = Vec::new();
 						for y in &ys {
 							let new_y = task
-								.get_samples(&x, y,options.backend.clone().as_deref(), options.n_generate_sample, options.prompt_sample.as_ref().map(|s| s.as_str()).unwrap_or(""), None)
+								.get_samples(
+									&x,
+									y,
+									options.backend.clone().as_deref(),
+									options.n_generate_sample,
+									options.prompt_sample.as_ref().map(|s| s.as_str()).unwrap_or(""),
+									None,
+								)
 								.await?;
 							new_ys.extend(new_y);
 						}
@@ -166,7 +218,7 @@ async fn main() -> anyhow::Result<()> {
 					Some("propose") => {
 						let mut new_ys = Vec::new();
 						for y in &ys {
-							let new_y = task.get_proposals(&x, y,options.backend.as_deref()).await?;
+							let new_y = task.get_proposals(&x, y, options.backend.as_deref()).await?;
 							new_ys.extend(new_y);
 						}
 						new_ys
@@ -175,15 +227,17 @@ async fn main() -> anyhow::Result<()> {
 				};
 				let ids = (0..new_ys.len()).collect::<Vec<_>>();
 				let values = match options.method_evaluate.as_ref().map(|s| s.as_str()) {
-					Some("vote") => task.get_votes(&x, &ys, options.n_evaluate_sample).await,
-					Some("value") => task.get_values(&x, &ys, options.backend.as_deref(),options.n_evaluate_sample, None).await,
+					Some("vote") => task.get_votes(&x, &new_ys, options.n_evaluate_sample).await,
+					Some("value") => task.get_values(&x, &new_ys, options.backend.as_deref(), options.n_evaluate_sample, None).await,
 					ev => anyhow::bail!("Invalid method_evaluate: {:?}", ev),
 				}?;
+				println!("Values::: {:?}", values);
 				let select_ids = match options.method_select.as_ref().map(|s| s.as_str()) {
 					Some("sample") => {
 						let sum = values.iter().sum::<f32>();
 						let ps = values.iter().map(|v| v / sum).collect::<Vec<_>>();
-						let weighted_index = WeightedIndex::new(&ps).unwrap();
+						println!("ps: {:?}", ps);
+						let weighted_index = WeightedIndex::new(&ps).expect("invalid weight");
 						let mut rng = rand::thread_rng();
 						(0..options.n_select_sample).map(|_| ids[weighted_index.sample(&mut rng)] as f32).collect::<Vec<_>>()
 					}
@@ -196,29 +250,52 @@ async fn main() -> anyhow::Result<()> {
 					s => anyhow::bail!("Invalid method_select: {:?}", s),
 				};
 
-				let select_new_ys = select_ids.iter().map(|id| new_ys[*id as usize].clone()).collect::<Vec<_>>();
+				let select_new_ys = select_ids.iter().map(|id| new_ys.get(*id as usize).unwrap().clone()).collect::<Vec<_>>();
 
-				// log unimplemented
-                
-				info.push(InfoData {
-					step: step.try_into().unwrap(),
-					x: x.clone(),
-					ys: ys.clone(),
-					new_ys,
-					values,
-					select_new_ys: select_new_ys.clone(),
-				});
+				// log 1
 
+				info.step = step.try_into().unwrap();
+				info.x += &x.clone();
+				info.ys = ys.clone();
+				info.new_ys = new_ys;
+				info.values = values;
+				info.select_new_ys = select_new_ys.clone();
+
+				all_info.steps = info.clone();
 				ys = select_new_ys;
 			}
+			// info_steps.insert("steps",info);
 			println!("info: {:?}", info);
-			(ys, Some(info))
+			(ys, Some(all_info.clone()))
 		};
 
 		// log
-        
+		let mut infos = vec![];
+		for y in &ys.clone() {
+			infos.push(task.clone().test_output(i, &y).await.unwrap());
+		}
+		// log
+		let usage_so_far = gpt_usage(options.backend.as_deref().unwrap_or("gpt-4")).await;
+		let mut y = info.unwrap();
+		y.idx = i;
+		y.ys = ys;
+		y.infos = infos.clone();
+		y.usage_so_far = usage_so_far;
+		logs.push(y);
+		let file = std::fs::File::create(file.clone()).expect("Unable to create file");
+		serde_json::to_writer(file, &logs).expect("unable to write to file");
 		// log main metric
+		let mut accs = vec![];
+		for info in infos {
+			accs.push(info.r);
+		}
+		cnt_avg += accs.iter().sum::<f32>() / accs.len() as f32;
+		cnt_any += 0;
+		println!("sum(accs):{:?} cnt_avg: {:?}, cnt_any: {:?}", accs.iter().sum::<f32>(), cnt_avg, cnt_any);
 	}
 
+	let n = options.task_end_index - options.task_start_index;
+	println!("n: {:?} {:?}", cnt_avg / n as f32, cnt_any as f32 / n as f32);
+	println!("usage_so_far: {:?}", gpt_usage(options.backend.as_deref().unwrap_or("gpt-4")).await);
 	Ok(())
 }

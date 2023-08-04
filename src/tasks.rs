@@ -1,5 +1,4 @@
 use anyhow::Ok;
-use async_openai::types::Prompt;
 
 use crate::{
 	models::gpt,
@@ -7,14 +6,13 @@ use crate::{
 };
 use regex::Regex;
 use std::{
-	collections::{BTreeMap, HashMap},
+	collections::BTreeMap,
 	path::Path,
-	process::Output,
 };
 
 pub const DATA_PATH: &str = "./data";
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub(crate) enum Task {
 	Game24 {
 		data: Vec<String>,
@@ -35,13 +33,16 @@ pub(crate) enum Task {
 	},
 }
 
+#[derive(Debug,Clone,serde::Serialize)]
+
 pub struct TOutput{
 r_letter:f32,
 r_word:f32,
 r_game:bool,
-r:f32,
+pub r:f32,
 rs:Vec<isize>,
 }
+
 impl TOutput{
 	pub fn new()->TOutput{
       TOutput { r_letter: 0.0, r_word: 0.0, r_game: false, r: 0.0, rs: vec![] }
@@ -109,15 +110,15 @@ impl Task {
 	pub async fn get_values(&mut self, x: &str, ys: &[String], model: Option<&str>, n_evaluate_sample: isize, cache_value: Option<bool>) -> anyhow::Result<Vec<f32>> {
 		let mut values = vec![];
 		let mut local_value_cache = BTreeMap::new();
-
+        let mut  value;
 		for y in ys {
 			if local_value_cache.contains_key(y) {
-				values.push(0f32);
+				value=0f32;
 			} else {
-				let value = self.get_value(x, y, model, n_evaluate_sample, cache_value.unwrap_or(true)).await?;
+				value = self.get_value(x, y, model, n_evaluate_sample, cache_value.unwrap_or(true)).await?;
 				local_value_cache.insert(y.to_string(), value);
-				values.push(value);
 			}
+			values.push(value);
 		}
 
 		Ok(values)
@@ -134,8 +135,8 @@ impl Task {
 		Ok(samples.iter().map(|s| format!("{y}{s}")).collect())
 	}
 
-	pub async fn get_votes(&self, x: &str, ys: &Vec<String>, n_evaluate_sample: isize) -> anyhow::Result<Vec<f32>> {
-		let vote_prompt = self.vote_prompt_wrap(x, ys);
+	pub async fn get_votes(&self, _x: &str, ys: &Vec<String>, n_evaluate_sample: isize) -> anyhow::Result<Vec<f32>> {
+		let vote_prompt = self.vote_prompt_wrap( ys);
 		let vote_outputs = gpt(&vote_prompt, Some("gpt-3.5-turbo"), None, None, Some(n_evaluate_sample), None).await;
 		let values = self.vote_outputs_unwrap(&vote_outputs, ys.len());
 		Ok(values)
@@ -150,8 +151,8 @@ impl Task {
 	}
 	pub fn set_status(&mut self, x: &str, y: &str) -> anyhow::Result<TOutput> {
 		match self {
-			Task::MiniCrossword { env, xs, steps, cache_proposals } => {
-				let Some((idx, _)) = xs.iter().enumerate().find(|(idx, val)| val.as_str() == x) else {
+			Task::MiniCrossword { env, xs, .. } => {
+				let Some((idx, _)) = xs.iter().enumerate().find(|(_, val)| val.as_str() == x) else {
 					anyhow::bail!("Item not found");
 				};
 				// MiniCrossword test output
@@ -215,7 +216,7 @@ impl Task {
 			}
 		}
 	}
-	pub async fn test_output(self, idx: usize, output: &str) -> anyhow::Result<TOutput> {
+	pub async fn test_output(self, idx: isize, output: &str) -> anyhow::Result<TOutput> {
 		match self {
 			Task::Game24 { data, .. } => {
 				let mut result = TOutput::new();
@@ -224,7 +225,7 @@ impl Task {
 				let numbers_regex = Regex::new(r"\d+").unwrap();
 				let mut numbers: Vec<String> = numbers_regex.find_iter(&expression).map(|m| m.as_str().to_string()).collect();
 
-				let mut problem_numbers: Vec<String> = numbers_regex.find_iter(data.get(idx).unwrap()).map(|m| m.as_str().to_string()).collect();
+				let mut problem_numbers: Vec<String> = numbers_regex.find_iter(data.get(idx as usize).unwrap()).map(|m| m.as_str().to_string()).collect();
 				if numbers.sort() != problem_numbers.sort() {
 					result.r=0.0;
 					Ok(result)
@@ -254,14 +255,12 @@ impl Task {
 					}
 				}
 				println!("{:?}", scores);
-				// info.insert(String::from("rs"), scores.clone());
 				info.rs = scores.clone();
-				// info.insert(String::from("r"), if scores.is_empty() { vec![0] } else { vec![scores.iter().sum::<isize>() / scores.len() as isize] });
                 info.r= if scores.is_empty() { 0.0 } else {scores.iter().sum::<isize>() as f32/ scores.len() as f32};
 				Ok(info)
 			}
 			Task::MiniCrossword { mut env, .. } => {
-				env.reset(idx);
+				env.reset(idx.try_into().expect("failed to convert isize to usize")).expect("failed to reset");
 				let output = output.split("Output:\n").last().unwrap_or("");
 				let mut info = TOutput::new();
 				//  todo (For loop)
@@ -301,7 +300,7 @@ impl Task {
 			}
 		}
 	}
-	pub fn vote_prompt_wrap(&self, x: &str, ys: &Vec<String>) -> String {
+	pub fn vote_prompt_wrap(&self, ys: &Vec<String>) -> String {
 		let mut prompt = VOTE_PROMPT_TEXT.to_owned();
 		for (i, y) in ys.iter().enumerate() {
 			let choice_prompt = format!("Choice {}:\n{}\n", i + 1, y);
@@ -330,18 +329,13 @@ impl Task {
 		vote_results
 	}
 }
-struct L {
-	r_letter: f32,
-	r_word: f32,
-	r_game: bool,
-}
-pub struct out {
+pub struct Out {
 	render: String,
 	r_all: bool,
 	all: bool,
 	letter: TOutput,
 }
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct MiniCrosswordEnv {
 	file: Vec<serde_json::Value>,
 	n: usize,
@@ -439,7 +433,7 @@ impl MiniCrosswordEnv {
 		ans
 	}
 
-	fn step(&mut self, action: &str) -> anyhow::Result<out> {
+	fn step(&mut self, action: &str) -> anyhow::Result<Out> {
 		let mut action_parts = action.trim().split('\n').last().expect("Invalid! Format ").split(". ");
 		let pos = action_parts.next();
 		let word = action_parts.next();
@@ -475,7 +469,7 @@ impl MiniCrosswordEnv {
 		self.ext.status[idx] = 1;
 		self.ext.ans = self.ext.new_ans.clone();
 		let r_all = self.ext.board == self.ext.board_gt;
-		let test = out {
+		let test = Out {
 			render: self.render(Some(true)),
 			r_all,
 			all: r_all || self.ext.steps >= 20,
@@ -490,7 +484,7 @@ impl MiniCrosswordEnv {
 	}
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug,Clone)]
 pub struct MiniCrosswordEnvExt {
 	data: serde_json::Value,
 	board_gt: Vec<String>,
